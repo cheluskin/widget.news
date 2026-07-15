@@ -24,14 +24,14 @@ binding = "AI"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "nw-widgets"
-database_id = "06fd022a-d1d5-45f7-b2da-ac63b488b0db"
-preview_database_id = "06fd022a-d1d5-45f7-b2da-ac63b488b0db"
+database_name = "widget-news"
+database_id = "b5a0740d-e28f-491c-abbb-1a590e1e8e10"
+preview_database_id = "b5a0740d-e28f-491c-abbb-1a590e1e8e10"
 
 [[r2_buckets]]
 binding = "FEEDS"
-bucket_name = "nw-feeds"
-preview_bucket_name = "nw-feeds-preview"
+bucket_name = "widget-news-feeds"
+preview_bucket_name = "widget-news-feeds-preview"
 
 [vars]
 PUBLIC_BASE_URL = "https://widget.news"
