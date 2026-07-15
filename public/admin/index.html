@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Manage your widget.news feed" />
+    <meta name="theme-color" content="#0B1220" />
+    <title>Admin — widget.news</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="site-header">
+        <a class="brand" href="/" aria-label="widget.news home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="3" y="4" width="18" height="16" rx="2.5" fill="currentColor" opacity="0.12" />
+              <rect x="6" y="7" width="8" height="2" rx="1" fill="#E85D04" />
+              <rect x="6" y="11" width="12" height="1.4" rx="0.7" fill="currentColor" opacity="0.45" />
+              <rect x="6" y="14.2" width="10" height="1.4" rx="0.7" fill="currentColor" opacity="0.3" />
+              <rect x="6" y="17.4" width="7" height="1.4" rx="0.7" fill="currentColor" opacity="0.2" />
+            </svg>
+          </span>
+          <span class="brand-text">
+            <span class="brand-name">widget<span class="dot">.</span>news</span>
+            <span class="brand-tag">admin</span>
+          </span>
+        </a>
+        <nav class="nav-links" aria-label="Main">
+          <a href="/">← Builder</a>
+          <span class="sep">·</span>
+          <a href="/demo">Demo</a>
+        </nav>
+      </header>
+
+      <section class="hero">
+        <p class="eyebrow">Control panel</p>
+        <h1>Управление виджетом</h1>
+        <p class="lead">Откройте ссылку с token после создания или вставьте public id и admin token.</p>
+      </section>
+
+      <section class="card">
+        <form id="load-form">
+          <label>
+            Public ID
+            <input id="public-id" required placeholder="TAtfQzhYCavD" />
+          </label>
+          <label>
+            Admin token
+            <input id="token" required type="password" autocomplete="off" />
+          </label>
+          <button type="submit">Загрузить</button>
+          <p class="err" id="load-error" hidden></p>
+        </form>
+      </section>
+
+      <section class="card" id="manage-card" hidden>
+        <h2 id="widget-title">Виджет</h2>
+        <p class="hint" id="meta-line"></p>
+
+        <form id="edit-form">
+          <label>
+            Название
+            <input id="edit-name" maxlength="120" />
+          </label>
+          <label>
+            Запрос
+            <textarea id="edit-query" rows="3" required minlength="3"></textarea>
+          </label>
+          <div class="row">
+            <label>
+              Частота
+              <select id="edit-period">
+                <option value="1d">1d</option>
+                <option value="6h">6h</option>
+                <option value="7d">7d</option>
+                <option value="1h">1h</option>
+              </select>
+            </label>
+            <label>
+              Results / run
+              <input id="edit-num" type="number" min="1" max="20" />
+            </label>
+            <label>
+              Widget limit
+              <input id="edit-limit" type="number" min="1" max="50" />
+            </label>
+            <label>
+              Тема
+              <select id="edit-theme">
+                <option value="auto">auto</option>
+                <option value="light">light</option>
+                <option value="dark">dark</option>
+              </select>
+            </label>
+            <label>
+              Статус
+              <select id="edit-status">
+                <option value="active">active</option>
+                <option value="paused">paused</option>
+              </select>
+            </label>
+          </div>
+          <div class="actions">
+            <button type="submit">Сохранить</button>
+            <button type="button" id="btn-sync" class="ghost">Sync feed</button>
+            <button type="button" id="btn-refresh" class="ghost">Обновить поиск</button>
+            <button type="button" id="btn-delete" class="danger">Удалить</button>
+          </div>
+          <p class="err" id="edit-error" hidden></p>
+          <p class="ok" id="edit-ok" hidden></p>
+        </form>
+
+        <label>
+          Embed
+          <textarea id="embed-out" rows="3" readonly></textarea>
+        </label>
+        <label>
+          Feed
+          <input id="feed-out" readonly />
+        </label>
+
+        <h3 class="subh">Preview</h3>
+        <div id="preview" class="preview"></div>
+      </section>
+
+      <footer class="site-footer">
+        <span class="brand-mini">widget<span class="dot">.</span>news</span>
+        <span>Admin · keep your token secret</span>
+      </footer>
+    </main>
+    <script src="/admin/admin.js"></script>
+  </body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "name": "widget.news",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types",
+    "db:local": "wrangler d1 execute nw-widgets --local --file=src/db/schema.sql",
+    "db:remote": "wrangler d1 execute nw-widgets --remote --file=src/db/schema.sql",
+    "check": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "verify": "npm run check && npm test"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260708.1",
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3",
+    "wrangler": "^4.110.0"
+  }
+}

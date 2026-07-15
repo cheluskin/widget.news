@@ -1,0 +1,43 @@
+name = "widget-news"
+main = "src/index.ts"
+compatibility_date = "2025-06-01"
+compatibility_flags = ["nodejs_compat"]
+account_id = "86a0fe115b609b0171f780a28605b190"
+
+# Workers Custom Domain
+[[routes]]
+pattern = "widget.news"
+custom_domain = true
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+html_handling = "auto-trailing-slash"
+run_worker_first = ["/api/*", "/f/*", "/health"]
+
+# Due widgets: Exa Search + Workers AI summaries
+[triggers]
+crons = ["15 * * * *"]
+
+[ai]
+binding = "AI"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nw-widgets"
+database_id = "06fd022a-d1d5-45f7-b2da-ac63b488b0db"
+preview_database_id = "06fd022a-d1d5-45f7-b2da-ac63b488b0db"
+
+[[r2_buckets]]
+binding = "FEEDS"
+bucket_name = "nw-feeds"
+preview_bucket_name = "nw-feeds-preview"
+
+[vars]
+PUBLIC_BASE_URL = "https://widget.news"
+# Optional CDN for feeds: https://cdn.widget.news
+FEED_BASE_URL = "https://widget.news"
+FEED_CAP = "100"
+
+# Secrets: EXA_API_KEY, optional CF_ZONE_ID + CF_API_TOKEN for purge
+# Summaries: Workers AI @cf/meta/llama-3.2-3b-instruct (binding AI)

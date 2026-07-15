@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Embed demo — widget.news" />
+    <meta name="theme-color" content="#0B1220" />
+    <title>Demo — widget.news</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="site-header">
+        <a class="brand" href="/" aria-label="widget.news home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="3" y="4" width="18" height="16" rx="2.5" fill="currentColor" opacity="0.12" />
+              <rect x="6" y="7" width="8" height="2" rx="1" fill="#E85D04" />
+              <rect x="6" y="11" width="12" height="1.4" rx="0.7" fill="currentColor" opacity="0.45" />
+              <rect x="6" y="14.2" width="10" height="1.4" rx="0.7" fill="currentColor" opacity="0.3" />
+              <rect x="6" y="17.4" width="7" height="1.4" rx="0.7" fill="currentColor" opacity="0.2" />
+            </svg>
+          </span>
+          <span class="brand-text">
+            <span class="brand-name">widget<span class="dot">.</span>news</span>
+            <span class="brand-tag">demo</span>
+          </span>
+        </a>
+        <nav class="nav-links" aria-label="Main">
+          <a href="/">← Builder</a>
+          <span class="sep">·</span>
+          <a href="/admin">Admin</a>
+        </nav>
+      </header>
+
+      <section class="hero">
+        <p class="eyebrow">Third-party page</p>
+        <h1>Embed demo</h1>
+        <p class="lead">
+          Paste a public id from a created widget to preview the embed as a third-party site would load it.
+        </p>
+      </section>
+
+      <section class="card">
+        <label>
+          Public ID
+          <input id="pid" placeholder="from create response" />
+        </label>
+        <button type="button" id="go">Show widget</button>
+        <div id="host" class="preview" style="margin-top: 16px"></div>
+      </section>
+
+      <footer class="site-footer">
+        <span class="brand-mini">widget<span class="dot">.</span>news</span>
+        <span>Embed via <code style="font-size: 12px">embed.js</code></span>
+      </footer>
+    </main>
+    <script src="/embed.js"></script>
+    <script>
+      document.getElementById("go").onclick = function () {
+        var id = document.getElementById("pid").value.trim();
+        var host = document.getElementById("host");
+        host.innerHTML = "";
+        if (!id) return;
+        var d = document.createElement("div");
+        d.setAttribute("data-wn", id);
+        d.setAttribute("data-theme", "auto");
+        d.setAttribute("data-limit", "5");
+        host.appendChild(d);
+        if (window.WidgetNews) window.WidgetNews.mount(d);
+      };
+      var q = new URLSearchParams(location.search).get("id");
+      if (q) {
+        document.getElementById("pid").value = q;
+        document.getElementById("go").click();
+      }
+    </script>
+  </body>
+</html>
