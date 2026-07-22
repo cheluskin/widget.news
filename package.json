@@ -1,17 +1,20 @@
 {
   "name": "widget.news",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "types": "wrangler types",
-    "db:local": "wrangler d1 execute nw-widgets --local --file=src/db/schema.sql",
-    "db:remote": "wrangler d1 execute nw-widgets --remote --file=src/db/schema.sql",
+    "db:local": "wrangler d1 execute widget-news --local --file=src/db/schema.sql",
+    "db:remote": "wrangler d1 execute widget-news --remote --file=src/db/schema.sql",
+    "db:migrate:local": "wrangler d1 execute widget-news --local --file=src/db/migrate.sql",
+    "db:migrate:remote": "wrangler d1 execute widget-news --remote --file=src/db/migrate.sql",
     "check": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
-    "verify": "npm run check && npm test"
+    "verify": "npm run check && npm test",
+    "cdn:cache-rule": "node scripts/setup-cdn-cache-rule.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260708.1",

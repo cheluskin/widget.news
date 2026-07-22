@@ -11,4 +11,9 @@ interface Env {
   /** Optional CF API token for cache purge (prod) */
   CF_ZONE_ID?: string;
   CF_API_TOKEN?: string;
+  /**
+   * Root token — full system control (list/edit all widgets).
+   * Distinct from per-widget client access keys (admin_token_hash).
+   */
+  ROOT_TOKEN?: string;
 }

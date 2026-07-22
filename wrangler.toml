@@ -4,18 +4,35 @@ compatibility_date = "2025-06-01"
 compatibility_flags = ["nodejs_compat"]
 account_id = "86a0fe115b609b0171f780a28605b190"
 
-# Workers Custom Domain
+# Workers Custom Domains
 [[routes]]
 pattern = "widget.news"
+custom_domain = true
+
+# Feed CDN host — Worker + Cache API (edge HIT, R2 only on miss)
+# Pure R2 public domain cannot cache .json without Zone Cache Rules (needs zone:write token).
+[[routes]]
+pattern = "cdn.widget.news"
 custom_domain = true
 
 [assets]
 directory = "./public"
 binding = "ASSETS"
 html_handling = "auto-trailing-slash"
-run_worker_first = ["/api/*", "/f/*", "/health"]
+# Locale prefixes + API must hit the Worker (assets are rewritten without /ru|/uk|/en)
+run_worker_first = [
+  "/api/*",
+  "/f/*",
+  "/health",
+  "/en",
+  "/en/*",
+  "/ru",
+  "/ru/*",
+  "/uk",
+  "/uk/*",
+]
 
-# Due widgets: Exa Search + Workers AI summaries
+# Due widgets: Exa Search + Workers AI summaries (no Monitors)
 [triggers]
 crons = ["15 * * * *"]
 
@@ -35,9 +52,10 @@ preview_bucket_name = "widget-news-feeds-preview"
 
 [vars]
 PUBLIC_BASE_URL = "https://widget.news"
-# Optional CDN for feeds: https://cdn.widget.news
-FEED_BASE_URL = "https://widget.news"
+# Feed CDN host (Worker custom domain: Cache API → R2 on miss)
+FEED_BASE_URL = "https://cdn.widget.news"
 FEED_CAP = "100"
 
 # Secrets: EXA_API_KEY, optional CF_ZONE_ID + CF_API_TOKEN for purge
+# Optional ROOT_TOKEN — full system control (all widgets); widget tokens are client keys
 # Summaries: Workers AI @cf/meta/llama-3.2-3b-instruct (binding AI)

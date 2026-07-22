@@ -15,10 +15,10 @@
     />
     <link rel="stylesheet" href="/app.css" />
   </head>
-  <body>
+  <body data-i18n-title="demo_meta_title" data-i18n-desc="demo_meta_desc">
     <main class="wrap">
       <header class="site-header">
-        <a class="brand" href="/" aria-label="widget.news home">
+        <a class="brand" href="/" data-lang-path="/" data-i18n-aria="meta_title">
           <span class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
               <rect x="3" y="4" width="18" height="16" rx="2.5" fill="currentColor" opacity="0.12" />
@@ -30,38 +30,48 @@
           </span>
           <span class="brand-text">
             <span class="brand-name">widget<span class="dot">.</span>news</span>
-            <span class="brand-tag">demo</span>
+            <span class="brand-tag" data-i18n="brand_tag_demo">demo</span>
           </span>
         </a>
-        <nav class="nav-links" aria-label="Main">
-          <a href="/">← Builder</a>
-          <span class="sep">·</span>
-          <a href="/admin">Admin</a>
-        </nav>
+        <div class="header-actions">
+          <div id="lang-switch"></div>
+          <nav class="nav-links" data-i18n-aria="nav_main">
+            <a href="/" data-lang-path="/" data-i18n="nav_builder">← Builder</a>
+            <span class="sep">·</span>
+            <a href="/admin" data-lang-path="/admin" data-i18n="nav_admin">Admin</a>
+          </nav>
+        </div>
       </header>
 
       <section class="hero">
-        <p class="eyebrow">Third-party page</p>
-        <h1>Embed demo</h1>
-        <p class="lead">
-          Paste a public id from a created widget to preview the embed as a third-party site would load it.
+        <p class="eyebrow" data-i18n="demo_eyebrow">As on your site</p>
+        <h1 data-i18n="demo_h1">Widget demo</h1>
+        <p class="lead" data-i18n="demo_lead">
+          Paste the public id of a widget you created to see how it looks when embedded on a page.
         </p>
       </section>
 
       <section class="card">
         <label>
-          Public ID
-          <input id="pid" placeholder="from create response" />
+          <span data-i18n="label_public_id">Widget ID</span>
+          <input id="pid" data-i18n-placeholder="ph_public_id" placeholder="from create or admin link" />
         </label>
-        <button type="button" id="go">Show widget</button>
-        <div id="host" class="preview" style="margin-top: 16px"></div>
+        <button type="button" id="go" class="btn-primary" data-i18n="btn_show">Show widget</button>
+        <div class="preview-frame" style="margin-top: 16px">
+          <div class="preview-chrome" aria-hidden="true">
+            <span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span>
+            <span class="preview-url">yoursite.com</span>
+          </div>
+          <div id="host" class="preview"></div>
+        </div>
       </section>
 
       <footer class="site-footer">
         <span class="brand-mini">widget<span class="dot">.</span>news</span>
-        <span>Embed via <code style="font-size: 12px">embed.js</code></span>
+        <span data-i18n="footer_demo">Try your widget here</span>
       </footer>
     </main>
+    <script src="/i18n.js"></script>
     <script src="/embed.js"></script>
     <script>
       document.getElementById("go").onclick = function () {
@@ -71,7 +81,7 @@
         if (!id) return;
         var d = document.createElement("div");
         d.setAttribute("data-wn", id);
-        d.setAttribute("data-theme", "auto");
+        d.setAttribute("data-theme", "site");
         d.setAttribute("data-limit", "5");
         host.appendChild(d);
         if (window.WidgetNews) window.WidgetNews.mount(d);

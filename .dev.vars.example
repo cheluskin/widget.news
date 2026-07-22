@@ -4,3 +4,4 @@ EXA_API_KEY=your_exa_api_key
 # Optional local overrides:
 # PUBLIC_BASE_URL=http://localhost:8787
 # FEED_BASE_URL=http://localhost:8787
+# ROOT_TOKEN=your_root_token_for_full_system_control

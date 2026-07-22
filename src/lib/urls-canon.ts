@@ -1,5 +1,5 @@
 /**
- * Canonical URL for dedup (Monitors-like URL identity).
+ * Canonical URL for dedup identity across feed + novelty history.
  * - https scheme, lower host, strip www
  * - drop trailing slash on path
  * - drop common tracking query params
@@ -37,7 +37,6 @@ export function canonicalizeUrl(raw: string | null | undefined): string | null {
       for (const v of kept.get(k)!) qs.append(k, v);
     }
     const q = qs.toString();
-    // Always https for identity (http/https same article)
     return `https://${host}${path === "/" ? "" : path}${q ? `?${q}` : ""}`;
   } catch {
     return null;

@@ -1,7 +1,7 @@
-import type { ExaSearchResult } from "./types";
+import type { SearchHit } from "./types.ts";
 import { canonicalizeUrl } from "./urls-canon.ts";
 
-/** Keep last N runs of titles/urls for semantic novelty (Exa Monitors: last 5). */
+/** How many past refresh runs to keep for URL/title dedup. */
 export const NOVELTY_RUN_HISTORY = 5;
 
 export interface NoveltyItem {
@@ -69,7 +69,7 @@ export function titleSimilarity(aTokens: string[], bTokens: string[]): number {
 
 export const TITLE_SIM_THRESHOLD = 0.72;
 
-export function itemFromResult(r: ExaSearchResult): NoveltyItem | null {
+export function itemFromHit(r: SearchHit): NoveltyItem | null {
   const url = canonicalizeUrl(r.url);
   if (!url) return null;
   const title = (r.title ?? "").trim() || url;
@@ -134,15 +134,15 @@ function feedSeenSets(feed: FeedRef[]): { urls: Set<string>; tokenSets: string[]
 }
 
 /**
- * Drop results already in feed or last N runs (URL + title similarity).
- * URLs are canonicalized before compare.
+ * Keep only hits that are new vs current feed and recent refresh history
+ * (canonical URL match or near-duplicate titles).
  */
 export function filterNovelResults(
-  results: ExaSearchResult[],
+  results: SearchHit[],
   novelty: NoveltyState,
   feed: FeedRef[],
   opts?: { threshold?: number; limit?: number },
-): { kept: ExaSearchResult[]; dropped: number } {
+): { kept: SearchHit[]; dropped: number } {
   const threshold = opts?.threshold ?? TITLE_SIM_THRESHOLD;
   const limit = opts?.limit;
   const hist = collectHistorySets(novelty);
@@ -151,7 +151,7 @@ export function filterNovelResults(
   const seenUrls = new Set<string>([...hist.urls, ...feedSets.urls]);
   const tokenSets = [...hist.tokenSets, ...feedSets.tokenSets];
 
-  const kept: ExaSearchResult[] = [];
+  const kept: SearchHit[] = [];
   let dropped = 0;
 
   for (const r of results) {
@@ -187,7 +187,6 @@ export function filterNovelResults(
       continue;
     }
 
-    // Keep original fields but store canonical url for stable feed keys
     kept.push({ ...r, url: canon });
     seenUrls.add(canon);
     if (tokens.length) tokenSets.push(tokens);
@@ -199,12 +198,12 @@ export function filterNovelResults(
 export function appendNoveltyRun(
   state: NoveltyState,
   runId: string,
-  results: ExaSearchResult[],
+  results: SearchHit[],
   at = new Date().toISOString(),
 ): NoveltyState {
   const items: NoveltyItem[] = [];
   for (const r of results) {
-    const it = itemFromResult(r);
+    const it = itemFromHit(r);
     if (it) items.push(it);
   }
   const runs = [{ at, runId, items }, ...state.runs].slice(0, NOVELTY_RUN_HISTORY);
