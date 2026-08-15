@@ -27,7 +27,9 @@ Live news widgets for any site. User sets a topic → gets an embed. The **Worke
 - Create mints a new key unless body includes existing `accessToken` (16–200 chars).
 - API field: `accessToken` (alias `adminToken` still returned).
 - `GET /api/widgets` → `{ scope: "root" \| "client", widgets: [...] }`.
-- Deep link `/admin?token=…` persists the key, then cleans the query string.
+- Deep link `/admin/#token=…` hands the key to the browser once via a **URL fragment**. The client stores it in `localStorage` and scrubs the fragment from the location. Because it’s a fragment — never a query string — the key is **client-only and never sent to the server** in an HTTP request, so it can’t leak into server logs or referrers.
+
+The API accepts the key **Bearer-only** via the `Authorization` header. A query `?token=` is never read (nor advertised); passing credentials in a URL leaks them via logs and referrers.
 
 ### Session UX
 
@@ -165,8 +167,8 @@ Legacy `auto` → stored/returned as `site`.
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | POST | `/api/widgets` | — | Create (+ optional `accessToken`) |
-| GET | `/api/widgets` | Bearer / `?token=` | List (`ROOT_TOKEN` → all) |
-| GET | `/api/widgets/:id` | Bearer / `?token=` | Config + embed |
+| GET | `/api/widgets` | Bearer | List (`ROOT_TOKEN` → all) |
+| GET | `/api/widgets/:id` | Bearer | Config + embed |
 | PATCH | `/api/widgets/:id` | Bearer | Update |
 | DELETE | `/api/widgets/:id` | Bearer | Delete + purge feed |
 | POST | `/api/widgets/:id/refresh` | Bearer | Search + AI → R2 |

@@ -12,16 +12,18 @@
     return auth() ? auth().getAccessToken() : "";
   }
   function saveToken(token) {
-    if (auth() && token) auth().setAccessToken(token);
+    // app.js only handles widget client access keys (POST /api/widgets
+    // mints/reuses a client key, never a root token) — persist as "client".
+    if (auth() && token) auth().setAccessToken(token, "client");
   }
   function clearToken() {
     if (auth()) auth().clearAccessToken();
   }
 
   // Logged-in users land in dashboard — stay on builder only with ?new=1
-  var params = new URLSearchParams(location.search);
-  var forceNew = params.get("new") === "1" || params.get("new") === "true";
-  var storedToken = getStoredToken();
+  const params = new URLSearchParams(location.search);
+  const forceNew = params.get("new") === "1" || params.get("new") === "true";
+  const storedToken = getStoredToken();
   if (storedToken && !forceNew) {
     location.replace(localeHref("/admin"));
     return;
@@ -55,6 +57,7 @@
     adminToken: storedToken || null,
     feedUrl: null,
     pollTimer: null,
+    pollStartTimer: null,
     theme: "site",
     widgetLimit: 5,
     title: "",
@@ -67,9 +70,11 @@
   if (signedInBanner && state.adminToken) {
     signedInBanner.hidden = false;
   }
-  var btnLogoutHome = document.getElementById("btn-logout-home");
+  const btnLogoutHome = document.getElementById("btn-logout-home");
   if (btnLogoutHome) {
     btnLogoutHome.addEventListener("click", function () {
+      // Stop both poll handles (hoisted declaration) before dropping the key
+      clearPollTimers();
       clearToken();
       state.adminToken = null;
       state.reusedKey = false;
@@ -78,7 +83,7 @@
     });
   }
 
-  var APPEARANCE_DEFAULTS = {
+  const APPEARANCE_DEFAULTS = {
     title: "",
     theme: "site",
     widgetLimit: 5,
@@ -91,7 +96,7 @@
   function setFlowStep(n) {
     if (!flowSteps) return;
     flowSteps.querySelectorAll(".step").forEach(function (el) {
-      var s = Number(el.getAttribute("data-step"));
+      const s = Number(el.getAttribute("data-step"));
       el.classList.toggle("is-active", s === n);
       el.classList.toggle("is-done", s < n);
     });
@@ -140,7 +145,7 @@
   }
 
   function setSyncStatus(text, kind) {
-    var cls = "hint flash" + (kind ? " is-" + kind : "");
+    const cls = "hint flash" + (kind ? " is-" + kind : "");
     if (syncStatus) {
       syncStatus.textContent = text || "";
       syncStatus.className = cls;
@@ -176,19 +181,32 @@
     });
   });
 
+  function normalizeTheme(theme) {
+    return theme === "light" || theme === "dark" ? theme : "site";
+  }
+
+  // Reflect a theme into the hidden input + segment active state (admin.js parity)
+  function setThemeUI(theme) {
+    const val = normalizeTheme(theme);
+    if (themeInput) themeInput.value = val;
+    if (themeSegment) {
+      themeSegment.querySelectorAll("[data-theme]").forEach(function (b) {
+        b.classList.toggle("is-active", b.getAttribute("data-theme") === val);
+      });
+    }
+  }
+  setThemeUI(state.theme);
+
   // Theme segment control (site | light | dark)
   if (themeSegment && themeInput) {
     themeSegment.querySelectorAll("[data-theme]").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        var val = btn.getAttribute("data-theme");
-        themeInput.value = val;
-        themeSegment.querySelectorAll("[data-theme]").forEach(function (b) {
-          b.classList.toggle("is-active", b === btn);
-        });
+        const val = btn.getAttribute("data-theme");
+        setThemeUI(val);
+        state.theme = normalizeTheme(val);
         // Live preview: site inherits this page; light/dark are fixed palettes
         if (state.publicId) {
-          state.theme = val;
-          var app = readAppearance();
+          const app = readAppearance();
           app.theme = val;
           mountPreview(state.publicId, app);
         }
@@ -196,13 +214,13 @@
     });
   }
 
-  var btnResetAppearance = document.getElementById("btn-reset-appearance");
+  const btnResetAppearance = document.getElementById("btn-reset-appearance");
   if (btnResetAppearance) {
     btnResetAppearance.addEventListener("click", function () {
-      var titleEl = document.getElementById("title");
-      var limitEl = document.getElementById("widgetLimit");
-      var borderlessEl = document.getElementById("borderless");
-      var summariesEl = document.getElementById("showSummaries");
+      const titleEl = document.getElementById("title");
+      const limitEl = document.getElementById("widgetLimit");
+      const borderlessEl = document.getElementById("borderless");
+      const summariesEl = document.getElementById("showSummaries");
       if (titleEl) titleEl.value = APPEARANCE_DEFAULTS.title;
       if (limitEl) limitEl.value = APPEARANCE_DEFAULTS.widgetLimit;
       if (themeInput) themeInput.value = APPEARANCE_DEFAULTS.theme;
@@ -225,7 +243,7 @@
   // Example topic chips
   document.querySelectorAll(".chip[data-example]").forEach(function (btn) {
     btn.addEventListener("click", function () {
-      var q = document.getElementById("query");
+      const q = document.getElementById("query");
       if (!q) return;
       q.value = btn.getAttribute("data-example") || btn.textContent;
       q.focus();
@@ -293,6 +311,9 @@
     };
     s.onerror = function () {
       window.__embedLoading = null;
+      // A failed embed load must not strand the preview in its loading state.
+      const host = document.getElementById("preview-host");
+      if (host) host.classList.remove("is-loading");
       setSyncStatus(t("sync_embed_fail"), "err");
     };
     document.body.appendChild(s);
@@ -313,6 +334,7 @@
   function mountPreview(publicId, appearance) {
     appearance = appearance || readAppearance();
     const host = document.getElementById("preview-host");
+    if (!host) return;
     host.classList.add("is-loading");
     host.innerHTML = "";
     previewBox = document.createElement("div");
@@ -327,10 +349,11 @@
     previewBox.setAttribute("data-cache-bust", "1");
     previewBox.setAttribute("data-no-ping", "1");
     host.appendChild(previewBox);
-    reloadPreview.hidden = false;
+    if (reloadPreview) reloadPreview.hidden = false;
+    const box = previewBox;
     ensureEmbed(function () {
-      var api = window.WidgetNews || window.NwNews;
-      if (api) api.mount(previewBox);
+      const api = window.WidgetNews || window.NwNews;
+      if (api && box) api.mount(box);
       setTimeout(function () {
         host.classList.remove("is-loading");
       }, 350);
@@ -342,9 +365,10 @@
       setSyncStatus(t("sync_create_first"), "err");
       return;
     }
-    var api = window.WidgetNews || window.NwNews;
+    const api = window.WidgetNews || window.NwNews;
     if (previewBox && api) {
       const host = document.getElementById("preview-host");
+      if (!host) return;
       host.classList.add("is-loading");
       previewBox.setAttribute("data-cache-bust", "1");
       api.mount(previewBox);
@@ -389,15 +413,28 @@
     } catch (_) {}
   }
 
-  function localizeAdminUrl(serverUrl, publicId, token) {
-    // Token lives in localStorage — dashboard link does not need ?token=
-    var path = localeHref("/admin");
-    return location.origin + path;
+  // Fragment-only tokens, query strings never emitted: a valid absolute
+  // serverUrl wins (query/hash stripped); else the local locale-aware /admin.
+  function localizeAdminUrl(serverUrl, token) {
+    let url = "";
+    if (serverUrl) {
+      try {
+        const u = new URL(serverUrl);
+        if (u.protocol === "http:" || u.protocol === "https:") {
+          u.search = "";
+          u.hash = "";
+          url = u.toString();
+        }
+      } catch (_) {}
+    }
+    if (!url) url = location.origin + localeHref("/admin");
+    if (token) url += "#token=" + encodeURIComponent(token);
+    return url;
   }
 
   function updateTokenBlockUI(reused) {
-    var titleEl = document.getElementById("token-block-title");
-    var hintEl = document.getElementById("token-block-hint");
+    const titleEl = document.getElementById("token-block-title");
+    const hintEl = document.getElementById("token-block-hint");
     if (reused) {
       if (titleEl) titleEl.textContent = t("label_token_linked");
       if (hintEl) hintEl.textContent = t("token_linked_hint");
@@ -411,11 +448,14 @@
 
   function applyWidgetResponse(data, opts) {
     opts = opts || {};
-    var token = data.accessToken || data.adminToken || state.adminToken;
-    var reused = state.reusedKey || Boolean(getStoredToken() && token === getStoredToken());
+    const token = data.accessToken || data.adminToken || state.adminToken;
+    // "reused" is a property of the current submit attempt only: the attempt's
+    // existing key (opts.existingKey, "" for a fresh mint) came back unchanged.
+    // The sticky state.reusedKey is reset here, never OR-ed in — a fresh or
+    // rotated token must be shown once, never hidden by an earlier attempt.
+    const reused = Boolean(opts.existingKey && token && token === opts.existingKey);
     if (token) {
       saveToken(token);
-      reused = reused || state.reusedKey;
     }
     state = {
       id: data.id,
@@ -423,6 +463,7 @@
       adminToken: token,
       feedUrl: data.feedUrl,
       pollTimer: state.pollTimer,
+      pollStartTimer: state.pollStartTimer,
       theme: data.theme || state.theme || "site",
       widgetLimit: data.widgetLimit || state.widgetLimit || 5,
       title: data.title || data.name || state.title || "",
@@ -431,18 +472,27 @@
       reusedKey: reused,
     };
     if (token) {
-      document.getElementById("admin-token").value = token;
+      const adminTokenEl = document.getElementById("admin-token");
+      if (adminTokenEl) adminTokenEl.value = token;
     }
-    var adminUrl = localizeAdminUrl(data.adminUrl, data.publicId, token);
-    document.getElementById("admin-link").value = adminUrl;
-    document.getElementById("open-admin").href = adminUrl;
-    document.getElementById("feed-url").value = data.feedUrl || "";
-    document.getElementById("embed-code").value = data.embed || "";
+    const adminUrl = localizeAdminUrl(data.adminUrl, token);
+    const adminLinkEl = document.getElementById("admin-link");
+    if (adminLinkEl) adminLinkEl.value = adminUrl;
+    const openAdmin = document.getElementById("open-admin");
+    if (openAdmin) {
+      openAdmin.href = adminUrl;
+      openAdmin.removeAttribute("data-lang-path"); // i18n rewrite would drop the fragment
+    }
+    const feedUrlEl = document.getElementById("feed-url");
+    if (feedUrlEl) feedUrlEl.value = data.feedUrl || "";
+    const embedCodeEl = document.getElementById("embed-code");
+    if (embedCodeEl) embedCodeEl.value = data.embed || "";
     updateTokenBlockUI(reused);
     if (signedInBanner) signedInBanner.hidden = !token;
-    resultCard.hidden = false;
+    if (resultCard) resultCard.hidden = false;
     setFlowStep(3);
     persistState();
+    setThemeUI(state.theme);
     if (opts.mount !== false) {
       mountPreview(state.publicId, {
         title: state.title,
@@ -454,33 +504,47 @@
     }
   }
 
+  // Both poll handles live in state: the pending 2s start delay and the live
+  // interval. Clearing both keeps a duplicate pollSync from orphaning either
+  // one or letting a stale callback overwrite the current interval handle.
+  function clearPollTimers() {
+    if (state.pollStartTimer) {
+      clearTimeout(state.pollStartTimer);
+      state.pollStartTimer = null;
+    }
+    if (state.pollTimer) {
+      clearInterval(state.pollTimer);
+      state.pollTimer = null;
+    }
+  }
+
   async function pollSync(maxAttempts) {
     let n = 0;
-    if (state.pollTimer) clearInterval(state.pollTimer);
+    clearPollTimers();
     setSyncStatus(t("sync_searching"));
-    statusLine.textContent = t("status_created");
-    statusLine.className = "ok";
+    if (statusLine) {
+      statusLine.textContent = t("status_created");
+      statusLine.className = "ok";
+    }
 
     const tick = async function () {
       n++;
       try {
-        const res = await fetch(
-          "/api/widgets/" +
-            encodeURIComponent(state.id) +
-            "?token=" +
-            encodeURIComponent(state.adminToken),
-        );
+        const res = await fetch("/api/widgets/" + encodeURIComponent(state.id), {
+          headers: { authorization: "Bearer " + state.adminToken },
+        });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || res.statusText);
 
         if (data.lastSyncedAt) {
-          var when = new Date(data.lastSyncedAt).toLocaleString();
+          const when = new Date(data.lastSyncedAt).toLocaleString();
           setSyncStatus(t("sync_ready", { when: when }), "ok");
-          statusLine.textContent = t("status_ready");
-          statusLine.className = "ok";
+          if (statusLine) {
+            statusLine.textContent = t("status_ready");
+            statusLine.className = "ok";
+          }
           refreshPreview();
-          clearInterval(state.pollTimer);
-          state.pollTimer = null;
+          clearPollTimers();
           return;
         }
         setSyncStatus(t("sync_waiting", { n: n, max: maxAttempts }));
@@ -489,21 +553,33 @@
         setSyncStatus(t("sync_status_err", { msg: e.message || e }), "err");
       }
       if (n >= maxAttempts) {
-        clearInterval(state.pollTimer);
-        state.pollTimer = null;
+        clearPollTimers();
         setSyncStatus(t("sync_timeout"), "err");
       }
     };
 
-    setTimeout(function () {
-      tick();
+    state.pollStartTimer = setTimeout(function () {
+      state.pollStartTimer = null;
+      // Handle first, immediate tick second: a first tick that is already
+      // synced clears a real timer — never an orphan interval.
       state.pollTimer = setInterval(tick, 3000);
+      tick();
     }, 2000);
+  }
+
+  // Blank-safe finite integer clamp (mirror of admin.js/backend clampInt):
+  // empty or non-numeric input falls back instead of coercing to 0 or NaN.
+  function clampInt(value, min, max, fallback) {
+    const trimmed = String(value === null || value === undefined ? "" : value).trim();
+    if (!trimmed) return fallback;
+    const n = Number(trimmed);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, Math.round(n)));
   }
 
   form.addEventListener("submit", async function (e) {
     e.preventDefault();
-    errEl.hidden = true;
+    if (errEl) errEl.hidden = true;
     setFlowStep(2);
     await withBusy(submitBtn, t("btn_creating"), async function () {
       try {
@@ -513,16 +589,15 @@
           title: appearance.title || undefined,
           query: document.getElementById("query").value.trim(),
           period: document.getElementById("period").value,
-          numResults: Number(document.getElementById("numResults").value),
+          numResults: clampInt(document.getElementById("numResults").value, 1, 20, 10),
           widgetLimit: appearance.widgetLimit,
           theme: appearance.theme,
           borderless: appearance.borderless,
           showSummaries: appearance.showSummaries,
         };
-        // Reuse permanent client key — no new token for returning publishers
+        // Reuse stored client key — no new token for returning publishers
         if (existingKey) {
           body.accessToken = existingKey;
-          state.reusedKey = true;
         }
         const res = await fetch("/api/widgets", {
           method: "POST",
@@ -532,30 +607,37 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || res.statusText);
 
-        applyWidgetResponse(data, { mount: true });
-        resultCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        // The one-time token row shows only when this attempt minted (or
+        // rotated to) a new key — an echoed existingKey hides it.
+        applyWidgetResponse(data, { mount: true, existingKey: existingKey });
+        if (resultCard) resultCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
         setSyncStatus(t("sync_searching"));
         pollSync(12);
       } catch (err) {
         setFlowStep(1);
-        errEl.textContent = err.message || String(err);
-        errEl.hidden = false;
+        if (errEl) {
+          errEl.textContent = err.message || String(err);
+          errEl.hidden = false;
+        }
       }
     });
   });
 
-  copyEmbedBtn.addEventListener("click", async function () {
-    const ta = document.getElementById("embed-code");
-    const ok = await withBusy(copyEmbedBtn, t("btn_copying"), function () {
-      return copyText(ta.value);
+  if (copyEmbedBtn) {
+    copyEmbedBtn.addEventListener("click", async function () {
+      const ta = document.getElementById("embed-code");
+      if (!ta) return;
+      const ok = await withBusy(copyEmbedBtn, t("btn_copying"), function () {
+        return copyText(ta.value);
+      });
+      if (ok) flashOk(copyEmbedBtn, t("btn_copied"));
+      else {
+        ta.focus();
+        ta.select();
+        setSyncStatus(t("sync_copy_fail"), "err");
+      }
     });
-    if (ok) flashOk(copyEmbedBtn, t("btn_copied"));
-    else {
-      ta.focus();
-      ta.select();
-      setSyncStatus(t("sync_copy_fail"), "err");
-    }
-  });
+  }
 
   if (refreshBtn) {
     refreshBtn.addEventListener("click", async function () {
@@ -563,10 +645,13 @@
       await withBusy(refreshBtn, t("wait"), async function () {
         try {
           setSyncStatus(t("sync_searching"));
-          const res = await fetch("/api/widgets/" + state.id + "/refresh", {
-            method: "POST",
-            headers: { authorization: "Bearer " + state.adminToken },
-          });
+          const res = await fetch(
+            "/api/widgets/" + encodeURIComponent(state.id) + "/refresh",
+            {
+              method: "POST",
+              headers: { authorization: "Bearer " + state.adminToken },
+            },
+          );
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || res.statusText);
           const ok = data.refreshed || data.synced;
@@ -583,7 +668,7 @@
     });
   }
 
-  reloadPreview.addEventListener("click", async function () {
+  if (reloadPreview) reloadPreview.addEventListener("click", async function () {
     if (!state.publicId) {
       setSyncStatus(t("sync_create_first"), "err");
       return;
@@ -597,69 +682,91 @@
     });
   });
 
-  // After create, session may still have last widget for preview (token is in localStorage)
+  // After create, session may still have last widget for preview (token is in WN_AUTH storage)
   try {
     const raw =
       sessionStorage.getItem("wn_last_widget") || sessionStorage.getItem("nw_last_widget");
     if (raw && forceNew) {
       /* stay on clean form for new widget */
     } else if (raw) {
-      const saved = JSON.parse(raw);
-      var tok = getStoredToken() || saved.token;
-      if (saved && saved.publicId && tok) {
-        state = {
-          id: saved.id,
-          publicId: saved.publicId,
-          adminToken: tok,
-          feedUrl: saved.feedUrl || null,
-          pollTimer: null,
-          theme: saved.theme || "site",
-          widgetLimit: saved.widgetLimit || 5,
-          title: saved.title || "",
-          borderless: !!saved.borderless,
-          showSummaries: saved.showSummaries !== false,
-          reusedKey: true,
-        };
-        saveToken(tok);
-        document.getElementById("admin-token").value = tok;
-        document.getElementById("admin-link").value = localizeAdminUrl(null, saved.publicId, tok);
-        document.getElementById("open-admin").href = document.getElementById("admin-link").value;
-        if (saved.feedUrl) document.getElementById("feed-url").value = saved.feedUrl;
-        updateTokenBlockUI(true);
-        if (signedInBanner) signedInBanner.hidden = false;
-        resultCard.hidden = false;
-        setFlowStep(3);
-        statusLine.textContent = t("status_ready");
-        statusLine.className = "ok";
-        mountPreview(state.publicId, {
-          title: state.title,
-          theme: state.theme,
-          widgetLimit: state.widgetLimit,
-          borderless: state.borderless,
-          showSummaries: state.showSummaries,
-        });
-        fetch(
-          "/api/widgets/" + encodeURIComponent(saved.publicId) + "?token=" + encodeURIComponent(tok),
-        )
-          .then(function (r) {
-            return r.json().then(function (d) {
-              return { ok: r.ok, d: d };
-            });
+      let saved = null;
+      try {
+        saved = JSON.parse(raw);
+      } catch (_) {}
+      if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+        const tok = getStoredToken() || saved.token;
+        if (saved.publicId && tok) {
+          state = {
+            id: saved.id,
+            publicId: saved.publicId,
+            adminToken: tok,
+            feedUrl: saved.feedUrl || null,
+            pollTimer: null,
+            pollStartTimer: null,
+            theme: saved.theme || "site",
+            widgetLimit: saved.widgetLimit || 5,
+            title: saved.title || "",
+            borderless: !!saved.borderless,
+            showSummaries: saved.showSummaries !== false,
+            reusedKey: true,
+          };
+          saveToken(tok);
+          const adminTokenEl = document.getElementById("admin-token");
+          if (adminTokenEl) adminTokenEl.value = tok;
+          // Restored same-browser session: clean dashboard link — key stays in WN_AUTH storage
+          const adminLink = localizeAdminUrl(null, null);
+          const adminLinkEl = document.getElementById("admin-link");
+          if (adminLinkEl) adminLinkEl.value = adminLink;
+          const openAdmin = document.getElementById("open-admin");
+          if (openAdmin) {
+            openAdmin.href = adminLink;
+            openAdmin.removeAttribute("data-lang-path");
+          }
+          const feedUrlEl = document.getElementById("feed-url");
+          if (saved.feedUrl && feedUrlEl) feedUrlEl.value = saved.feedUrl;
+          updateTokenBlockUI(true);
+          if (signedInBanner) signedInBanner.hidden = false;
+          if (resultCard) resultCard.hidden = false;
+          setFlowStep(3);
+          if (statusLine) {
+            statusLine.textContent = t("status_ready");
+            statusLine.className = "ok";
+          }
+          setThemeUI(state.theme);
+          mountPreview(state.publicId, {
+            title: state.title,
+            theme: state.theme,
+            widgetLimit: state.widgetLimit,
+            borderless: state.borderless,
+            showSummaries: state.showSummaries,
+          });
+          fetch("/api/widgets/" + encodeURIComponent(saved.id || saved.publicId), {
+            headers: { authorization: "Bearer " + tok },
           })
-          .then(function (x) {
-            if (!x.ok) return;
-            if (x.d.feedUrl) document.getElementById("feed-url").value = x.d.feedUrl;
-            if (x.d.embed) document.getElementById("embed-code").value = x.d.embed;
-            document.getElementById("open-admin").href = localizeAdminUrl(null, x.d.publicId, tok);
-            state.theme = x.d.theme || state.theme;
-            state.widgetLimit = x.d.widgetLimit || state.widgetLimit;
-            state.title = x.d.title || x.d.name || state.title;
-            state.borderless = !!x.d.borderless;
-            state.showSummaries = x.d.showSummaries !== false && x.d.showSummaries !== 0;
-            state.id = x.d.id || state.id;
-            persistState();
-          })
-          .catch(function () {});
+            .then(function (r) {
+              return r.json().then(function (d) {
+                return { ok: r.ok, d: d };
+              });
+            })
+            .then(function (x) {
+              if (!x.ok || !x.d) return;
+              if (x.d.feedUrl && feedUrlEl) feedUrlEl.value = x.d.feedUrl;
+              const embedCodeEl = document.getElementById("embed-code");
+              if (x.d.embed && embedCodeEl) embedCodeEl.value = x.d.embed;
+              if (openAdmin) {
+                openAdmin.href = localizeAdminUrl(null, null);
+                openAdmin.removeAttribute("data-lang-path");
+              }
+              state.theme = x.d.theme || state.theme;
+              state.widgetLimit = x.d.widgetLimit || state.widgetLimit;
+              state.title = x.d.title || x.d.name || state.title;
+              state.borderless = !!x.d.borderless;
+              state.showSummaries = x.d.showSummaries !== false && x.d.showSummaries !== 0;
+              state.id = x.d.id || state.id;
+              persistState();
+            })
+            .catch(function () {});
+        }
       }
     }
   } catch (_) {}

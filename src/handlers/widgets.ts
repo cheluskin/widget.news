@@ -1,6 +1,12 @@
 import * as db from "../lib/db.ts";
 import * as exa from "../lib/exa.ts";
-import { emptyFeed, feedPresentationFromWidget, readFeed, writeFeed } from "../lib/feed.ts";
+import {
+  emptyFeed,
+  feedPresentationFromWidget,
+  purgeFeedCache,
+  readFeed,
+  writeFeed,
+} from "../lib/feed.ts";
 import { nanoid, randomToken, sha256Hex, timingSafeEqual } from "../lib/ids.ts";
 import { purgeWidgetArtifacts, refreshWidget } from "../lib/refresh.ts";
 import { deleteNovelty } from "../lib/novelty.ts";
@@ -18,12 +24,17 @@ function requireApiKey(env: Env): string | Response {
   return env.EXA_API_KEY;
 }
 
+/**
+ * API auth is Bearer-only: the client access key / root token must travel in
+ * the Authorization header. Query-string-style token login is never accepted —
+ * a token in a URL leaks into server logs and is shared via browser referrers.
+ */
 function parseAuthToken(req: Request): string | null {
   const h = req.headers.get("authorization");
-  if (h?.toLowerCase().startsWith("bearer ")) {
-    return h.slice(7).trim();
-  }
-  return new URL(req.url).searchParams.get("token");
+  if (!h?.toLowerCase().startsWith("bearer ")) return null;
+  const token = h.slice(7).trim();
+  // Reject an empty/whitespace bearer ("" or "Bearer  ").
+  return token ? token : null;
 }
 
 /**
@@ -40,13 +51,18 @@ async function isRootToken(token: string, env: Env): Promise<boolean> {
 async function assertAdminWithEnv(
   req: Request,
   env: Env,
-  row: { admin_token_hash: string },
+  row: { admin_token_hash: string | null | undefined },
 ): Promise<boolean> {
   const token = parseAuthToken(req);
   if (!token) return false;
   if (await isRootToken(token, env)) return true;
   const hash = await sha256Hex(token);
-  return timingSafeEqual(hash, row.admin_token_hash);
+  // Guard against null/undefined/empty/whitespace or anomalous legacy hashes:
+  // a missing stored hash must never pass (timingSafeEqual would coerce/compare
+  // against a non-string and silently allow).
+  const stored = row.admin_token_hash;
+  if (typeof stored !== "string" || !stored.trim()) return false;
+  return timingSafeEqual(hash, stored);
 }
 
 function publicResponse(env: Env, row: WidgetRow, req: Request, accessToken?: string) {
@@ -104,11 +120,31 @@ function resolveTitle(body: { title?: string; name?: string }): string | null | 
   return undefined;
 }
 
+/**
+ * Structured error boundary for the widgets API. Any unexpected rejection
+ * inside route dispatch or a D1 operation is caught here and turned into a
+ * stable, non-sensitive JSON 503 instead of leaking a bare exception (or raw
+ * D1 error message). Refresh/patch compensation catches live inside
+ * handleWidgetsUnsafe and still run first.
+ */
 export async function handleWidgets(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  try {
+    return await handleWidgetsUnsafe(req, env, ctx);
+  } catch (e) {
+    console.error("handleWidgets failed", {
+      method: req.method,
+      path: new URL(req.url).pathname,
+      error: e,
+    });
+    return error("Database or service temporarily unavailable", 503);
+  }
+}
+
+async function handleWidgetsUnsafe(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/$/, "") || "/";
 
-  // List: GET /api/widgets?token=  (token-only login, all matching widgets)
+  // List: GET /api/widgets (Bearer client key / ROOT_TOKEN → all matching widgets)
   if (req.method === "GET" && path === "/api/widgets") {
     return listWidgets(req, env);
   }
@@ -130,7 +166,7 @@ export async function handleWidgets(req: Request, env: Env, ctx: ExecutionContex
   if (!row) return error("Widget not found", 404);
 
   if (!(await assertAdminWithEnv(req, env, row))) {
-    return error("Unauthorized — pass Bearer widget access key, root token, or ?token=", 401);
+    return error("Unauthorized — pass a Bearer widget access key or root token", 401);
   }
 
   if (action === "refresh" || action === "sync") {
@@ -138,16 +174,32 @@ export async function handleWidgets(req: Request, env: Env, ctx: ExecutionContex
     const key = requireApiKey(env);
     if (key instanceof Response) return key;
     try {
-      // Manual refresh also counts as presence and can leave inactive
-      if (row.status === "inactive") {
-        await db.updateWidgetRow(env.DB, row.id, {
-          status: "active",
-          last_seen_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
+      // Manual refresh: run against an in-memory active snapshot so an inactive
+      // widget isn't permanently reactivated before the refresh has succeeded.
+      // Any successful run is explicit owner activity: persist a fresh
+      // last_seen for both active and inactive widgets, and flip to active only
+      // when it was inactive. A failed refresh (refreshed !== true) touches
+      // nothing.
+      const snapshot = row.status === "inactive" ? { ...row, status: "active" as const } : row;
+      const result = await refreshWidget(env, snapshot);
+      if (result.refreshed) {
+        // Persist presence best-effort: the refresh already succeeded, so a
+        // presence-write failure must not turn it into an error. A failed
+        // refresh (refreshed !== true) never touches presence.
+        try {
+          const persisted: Parameters<typeof db.updateWidgetRow>[2] = {
+            last_seen_at: new Date().toISOString(),
+          };
+          if (row.status === "inactive") persisted.status = "active";
+          await db.updateWidgetRow(env.DB, row.id, persisted);
+        } catch (e) {
+          console.error("refresh presence persist failed", {
+            runId: result.runId,
+            widgetId: row.id,
+            error: e,
+          });
+        }
       }
-      const fresh = (await db.getWidgetById(env.DB, row.id))!;
-      const result = await refreshWidget(env, fresh);
       return json(refreshPayload(result));
     } catch (e) {
       return searchError(e, "refresh failed");
@@ -172,7 +224,7 @@ export async function handleWidgets(req: Request, env: Env, ctx: ExecutionContex
 async function listWidgets(req: Request, env: Env): Promise<Response> {
   const token = parseAuthToken(req);
   if (!token) {
-    return error("Unauthorized — pass Bearer widget access key, root token, or ?token=", 401);
+    return error("Unauthorized — pass a Bearer widget access key or root token", 401);
   }
 
   let rows: WidgetRow[];
@@ -250,15 +302,41 @@ async function createWidget(req: Request, env: Env, ctx: ExecutionContext): Prom
       status: "active",
       borderless,
       show_summaries: showSummaries,
+      // Builder/admin preview uses data-no-ping — seed presence at create
+      last_seen_at: now,
       created_at: now,
       updated_at: now,
     });
   } catch (e) {
-    return error(`Failed to persist widget: ${e instanceof Error ? e.message : e}`, 500);
+    console.error("widget insert failed", { widgetId: id, publicId, error: e });
+    return error("Failed to persist widget", 500);
   }
 
-  const row = (await db.getWidgetById(env.DB, id))!;
-  await writeFeed(env.FEEDS, emptyFeed(row));
+  const row = await db.getWidgetById(env.DB, id);
+  if (!row) {
+    return error("Widget created but could not be loaded", 500);
+  }
+
+  try {
+    await writeFeed(env.FEEDS, emptyFeed(row));
+  } catch (e) {
+    // Initial R2 seed failed before the one-time token was returned: the row
+    // would be persisted but inaccessible. Roll the D1 row back so no orphaned
+    // widget is left behind. If cleanup itself fails, log it but keep returning
+    // the fixed, non-sensitive feed failure (never interpolate the raw error).
+    try {
+      await db.deleteWidgetRow(env.DB, id);
+    } catch (cleanupErr) {
+      console.error("feed seed rollback failed", {
+        widgetId: id,
+        publicId,
+        seedError: e,
+        rollbackError: cleanupErr,
+      });
+    }
+    console.error("feed seed failed", { widgetId: id, publicId, error: e });
+    return error("Failed to initialize widget feed", 502);
+  }
 
   // First fill in background (Exa Search + Workers AI summaries)
   ctx.waitUntil(
@@ -332,32 +410,109 @@ async function patchWidget(req: Request, env: Env, row: WidgetRow): Promise<Resp
   }
 
   await db.updateWidgetRow(env.DB, row.id, dbFields);
-  const updated = (await db.getWidgetById(env.DB, row.id))!;
-
-  // New topic must not be blocked by old novelty history
-  if (queryChanged) {
-    await deleteNovelty(env.FEEDS, updated.public_id);
+  const updated = await db.getWidgetById(env.DB, row.id);
+  // A missing row right after the update is a concurrent delete — do not write
+  // a feed for a row that no longer exists.
+  if (!updated) {
+    return error("Widget not found", 404);
   }
 
-  const existing = await readFeed(env.FEEDS, updated.public_id);
-  if (existing) {
-    await writeFeed(env.FEEDS, {
-      ...existing,
-      ...feedPresentationFromWidget(updated),
-    });
+  // Essential R2 write: keep the served feed consistent with the new DB state.
+  // Query change resets to an empty feed (old-topic items must not be served);
+  // otherwise rewrite presentation when a snapshot exists; an absent feed needs
+  // no write. If this fails, roll D1 back to the exact prior row so the two
+  // stores don't diverge.
+  try {
+    if (queryChanged) {
+      await writeFeed(env.FEEDS, emptyFeed(updated));
+    } else {
+      const existing = await readFeed(env.FEEDS, updated.public_id);
+      if (existing) {
+        await writeFeed(env.FEEDS, {
+          ...existing,
+          ...feedPresentationFromWidget(updated),
+        });
+      }
+    }
+  } catch (e) {
+    try {
+      await db.updateWidgetRow(env.DB, row.id, {
+        name: row.name,
+        query: row.query,
+        period: row.period,
+        num_results: row.num_results,
+        widget_limit: row.widget_limit,
+        theme: row.theme,
+        status: row.status,
+        borderless: row.borderless,
+        show_summaries: row.show_summaries,
+        last_seen_at: row.last_seen_at,
+        updated_at: row.updated_at,
+      });
+      return error("Failed to update feed", 502);
+    } catch (compErr) {
+      console.error("feed update failed and D1 compensation failed", {
+        feedError: e,
+        rollbackError: compErr,
+        widgetId: row.id,
+      });
+      return error("Widget update left in inconsistent state", 500);
+    }
+  }
+
+  // Best-effort cleanup after the essential rewrite succeeded.
+  if (queryChanged) {
+    try {
+      // The empty feed plus the changed query already prevent old items being
+      // served, so a novelty reset failure should not undo visible consistency.
+      await deleteNovelty(env.FEEDS, updated.public_id);
+    } catch (e) {
+      console.error("novelty reset failed after query change", e);
+    }
+  }
+  try {
+    // Cache cleanup can't be transactional across PoPs; a failed purge only
+    // delays consistency to the edge/CDN TTL.
+    await purgeFeedCache(env, updated.public_id);
+  } catch (e) {
+    console.error("feed cache purge failed", e);
   }
 
   return json(publicResponse(env, updated, req));
 }
 
 async function deleteWidget(env: Env, row: WidgetRow): Promise<Response> {
-  await purgeWidgetArtifacts(env, row.public_id);
+  // D1 is the source of truth: delete the row FIRST so the widget can no longer
+  // be routed or scheduled. A failure here propagates to the exported wrapper,
+  // which returns a structured 503, and no artifacts are purged (the widget is
+  // still live). Artifact cleanup after a successful D1 delete is best-effort:
+  // a failure is logged but still returns success because the row is gone.
   await db.deleteWidgetRow(env.DB, row.id);
+  try {
+    await purgeWidgetArtifacts(env, row.public_id);
+  } catch (e) {
+    console.error("widget artifact purge failed after delete", {
+      widgetId: row.id,
+      publicId: row.public_id,
+      error: e,
+    });
+  }
   return json({ ok: true, deleted: row.id, publicId: row.public_id });
 }
 
 function clampInt(v: unknown, min: number, max: number, fallback: number): number {
-  const n = typeof v === "number" ? v : Number(v);
+  // Only finite numbers and non-empty, finite numeric strings are accepted.
+  // null, undefined, booleans, empty/whitespace strings, and any other type
+  // (objects, arrays, etc.) fall back instead of being coerced (which would
+  // silently map e.g. `""` or `false` to 0).
+  if (typeof v === "number") {
+    if (!Number.isFinite(v)) return fallback;
+    return Math.min(max, Math.max(min, Math.round(v)));
+  }
+  if (typeof v !== "string") return fallback;
+  const trimmed = v.trim();
+  if (!trimmed) return fallback;
+  const n = Number(trimmed);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, Math.round(n)));
 }

@@ -1,6 +1,6 @@
 import * as db from "./db.ts";
 import * as exa from "./exa.ts";
-import { deleteFeed, mergeHitsIntoFeed, purgeFeedCache, readFeed } from "./feed.ts";
+import { deleteFeed, mergeHitsIntoFeedLocked, purgeFeedCache, readFeed } from "./feed.ts";
 import {
   INACTIVE_AFTER_MS,
   INACTIVE_GRACE_MS,
@@ -17,6 +17,12 @@ import {
 } from "./novelty.ts";
 import { summarizeHits } from "./summarize.ts";
 import type { Period, WidgetRow } from "./types.ts";
+
+export const OVERFETCH_MULTIPLIER = 2;
+export const OVERFETCH_MIN_HEADROOM = 5;
+export const MAX_EXA_RESULTS = 100;
+export const DEFAULT_CRON_WIDGET_LIMIT = 40;
+export const DEFAULT_CRON_CONCURRENCY = 4;
 
 export interface RefreshResult {
   /** True when a search run completed and feed was updated. */
@@ -49,23 +55,28 @@ export async function refreshWidget(env: Env, widget: WidgetRow): Promise<Refres
     };
   }
 
-  const locked = await db.tryAcquireSyncLock(env.DB, widget.id);
-  if (!locked) {
+  const token = await db.tryAcquireSyncLock(env.DB, widget.id);
+  if (!token) {
     return { refreshed: false, reason: "run_in_progress" };
   }
 
   try {
-    return await runRefresh(env, widget);
+    return await runRefresh(env, widget, token);
   } finally {
-    await db.releaseSyncLock(env.DB, widget.id).catch((e) => console.error("release lock", e));
+    await db
+      .releaseSyncLock(env.DB, widget.id, token)
+      .catch((e) => console.error("release lock", e));
   }
 }
 
-async function runRefresh(env: Env, widget: WidgetRow): Promise<RefreshResult> {
+async function runRefresh(env: Env, widget: WidgetRow, token: string): Promise<RefreshResult> {
   const period = widget.period as Period;
   const want = Math.max(1, widget.num_results);
   // Over-fetch so novelty still fills the widget after drops
-  const fetchN = Math.min(100, Math.max(want * 2, want + 5));
+  const fetchN = Math.min(
+    MAX_EXA_RESULTS,
+    Math.max(want * OVERFETCH_MULTIPLIER, want + OVERFETCH_MIN_HEADROOM),
+  );
 
   const startPub = startPublishedDate(period, widget.last_synced_at);
   const search = await exa.search(env.EXA_API_KEY, {
@@ -74,7 +85,7 @@ async function runRefresh(env: Env, widget: WidgetRow): Promise<RefreshResult> {
     startPublishedDate: startPub,
   });
   const raw = search.results;
-  const runId = search.requestId ?? `search_${Date.now()}`;
+  const runId = search.requestId ?? `search_${crypto.randomUUID()}`;
 
   const existing = await readFeed(env.FEEDS, widget.public_id);
   const feedRefs = (existing?.items ?? []).map((i) => ({ url: i.url, title: i.title }));
@@ -83,7 +94,7 @@ async function runRefresh(env: Env, widget: WidgetRow): Promise<RefreshResult> {
   const { kept, dropped } = filterNovelResults(raw, novelty, feedRefs, { limit: want });
 
   const summaries = await summarizeHits(env.AI, kept);
-  const snap = await mergeHitsIntoFeed(env, widget, kept, summaries);
+  const snap = await mergeHitsIntoFeedLocked(env, widget, kept, summaries, token);
   await purgeFeedCache(env, widget.public_id);
 
   const nextNovelty = appendNoveltyRun(novelty, runId, kept);
@@ -123,7 +134,8 @@ export async function refreshIfDue(env: Env, widget: WidgetRow): Promise<Refresh
 /** Hourly cron: mark idle widgets inactive, then refresh due active ones. */
 export async function refreshDueWidgets(
   env: Env,
-  limit = 40,
+  limit = DEFAULT_CRON_WIDGET_LIMIT,
+  concurrency = DEFAULT_CRON_CONCURRENCY,
 ): Promise<{ checked: number; updated: number; skipped: number; inactivated: number }> {
   const inactivated = await markIdleWidgetsInactive(env).catch((e) => {
     console.error("markIdleWidgetsInactive", e);
@@ -137,23 +149,24 @@ export async function refreshDueWidgets(
   let updated = 0;
   let skipped = 0;
 
-  // Refreshes run in concurrent batches (concurrency 4) to prevent cron timeout
-  const concurrency = 4;
-  for (let i = 0; i < widgets.length; i += concurrency) {
-    const batch = widgets.slice(i, i + concurrency);
-    const results = await Promise.all(
-      batch.map((w) =>
-        refreshIfDue(env, w).catch((e) => {
-          console.error("refresh due widget", w.public_id, e);
-          return { refreshed: false } as RefreshResult;
-        }),
-      ),
-    );
-    for (const r of results) {
-      if (r.refreshed) updated++;
-      else skipped++;
+  // Continuous worker pool with bounded concurrency prevents head-of-line blocking
+  const poolSize = Math.min(concurrency, widgets.length);
+  let nextIdx = 0;
+  const workers = Array.from({ length: poolSize }, async () => {
+    while (nextIdx < widgets.length) {
+      const idx = nextIdx++;
+      const w = widgets[idx];
+      try {
+        const r = await refreshIfDue(env, w);
+        if (r.refreshed) updated++;
+        else skipped++;
+      } catch (e) {
+        console.error("refresh due widget", w.public_id, e);
+        skipped++;
+      }
     }
-  }
+  });
+  await Promise.all(workers);
 
   return { checked: widgets.length, updated, skipped, inactivated };
 }
@@ -166,8 +179,9 @@ export async function markIdleWidgetsInactive(env: Env, now = Date.now()): Promi
   return db.markInactiveWidgets(env.DB, { graceBeforeIso, seenBeforeIso, nowIso });
 }
 
-/** Used on widget delete. */
+/** Used on widget delete — R2 objects + edge/CDN feed cache. */
 export async function purgeWidgetArtifacts(env: Env, publicId: string): Promise<void> {
   await deleteFeed(env.FEEDS, publicId);
   await deleteNovelty(env.FEEDS, publicId);
+  await purgeFeedCache(env, publicId);
 }

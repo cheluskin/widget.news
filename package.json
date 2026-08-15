@@ -11,6 +11,8 @@
     "db:remote": "wrangler d1 execute widget-news --remote --file=src/db/schema.sql",
     "db:migrate:local": "wrangler d1 execute widget-news --local --file=src/db/migrate.sql",
     "db:migrate:remote": "wrangler d1 execute widget-news --remote --file=src/db/migrate.sql",
+    "db:backfill-seen:local": "wrangler d1 execute widget-news --local --file=src/db/backfill-last-seen.sql",
+    "db:backfill-seen:remote": "wrangler d1 execute widget-news --remote --file=src/db/backfill-last-seen.sql",
     "check": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "verify": "npm run check && npm test",

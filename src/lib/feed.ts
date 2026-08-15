@@ -32,18 +32,18 @@ export async function hitToItem(
   seenAt: string,
   summaryOverride?: string | null,
 ): Promise<FeedItem | null> {
-  const url = canonicalizeUrl(r.url) ?? (r.url?.trim() || null);
+  const url = canonicalizeUrl(r.url);
   if (!url) return null;
   const title = (r.title ?? "").trim() || url;
-  const rawSummary =
+  // An explicit override is already finalized (and null stays null); only the
+  // source fallback (r.summary / r.text) needs finalizing.
+  const summary =
     summaryOverride !== undefined
       ? summaryOverride
-      : (r.summary ?? (typeof r.text === "string" ? r.text.slice(0, 400) : null));
-  // finalize: strip labels, drop title echo, soft-trim to ~2 UI lines
-  const summary =
-    summaryOverride !== undefined && summaryOverride !== null
-      ? finalizeSummary(summaryOverride, title)
-      : finalizeSummary(rawSummary, title);
+      : finalizeSummary(
+          r.summary ?? (typeof r.text === "string" ? r.text.slice(0, 400) : null),
+          title,
+        );
   return {
     id: await hashUrl(url),
     title,
@@ -61,7 +61,12 @@ export async function readFeed(bucket: R2Bucket, publicId: string): Promise<Feed
   // One-time migration path: objects written under feeds/ before CDN cutover
   if (!obj) obj = await bucket.get(legacyFeedKey(publicId));
   if (!obj) return null;
-  return (await obj.json()) as FeedSnapshot;
+  try {
+    return (await obj.json()) as FeedSnapshot;
+  } catch (e) {
+    console.warn(`readFeed: malformed json for feed ${publicId}`, e);
+    return null;
+  }
 }
 
 /**
@@ -133,22 +138,18 @@ export async function serveFeed(
 
   const snap = await readFeed(env.FEEDS, publicId);
   if (!snap) {
-    // Brief 404 cache reduces R2 hammering for bogus/bot ids
+    // Not-found is NOT edge-cached: a negative Cache-API entry would mask a
+    // feed created moments later. Non-cacheable headers also keep CDNs honest.
     const res = new Response(JSON.stringify({ error: "Feed not found" }), {
       status: 404,
       headers: {
         "content-type": "application/json; charset=utf-8",
         "access-control-allow-origin": "*",
-        "cache-control": "public, max-age=30, s-maxage=30",
-        "cdn-cache-control": "public, max-age=30",
+        "cache-control": "public, max-age=0, no-store",
+        "cdn-cache-control": "no-store",
         "x-feed-cache": "MISS",
       },
     });
-    try {
-      ctx.waitUntil(cache.put(cacheKey, res.clone()));
-    } catch {
-      /* ignore */
-    }
     return res;
   }
 
@@ -200,43 +201,52 @@ export async function deleteFeed(bucket: R2Bucket, publicId: string): Promise<vo
   ]);
 }
 
+export const DEFAULT_FEED_CAP = 100;
+
 /**
  * Merge search hits into R2 feed.
  * `summariesByUrl` — Workers AI (or fallback) summaries for new URLs.
  */
-export async function mergeHitsIntoFeed(
+async function mergeHitsIntoFeed(
   env: { FEEDS: R2Bucket; FEED_CAP: string },
   widget: WidgetRow,
   results: SearchHit[],
   summariesByUrl?: Map<string, string | null>,
 ): Promise<FeedSnapshot> {
-  const cap = Math.max(1, Number(env.FEED_CAP) || 100);
+  const cap = Math.max(1, Number(env.FEED_CAP) || DEFAULT_FEED_CAP);
   const now = new Date().toISOString();
   const existing = (await readFeed(env.FEEDS, widget.public_id)) ?? emptyFeed(widget);
+  // Old/malformed snapshots may be missing `items` or carry a non-array value.
+  // Normalize to an empty list before iterating.
+  const existingItems = Array.isArray(existing.items) ? existing.items : [];
 
   const byUrl = new Map<string, FeedItem>();
-  for (const item of existing.items) {
+  for (const item of existingItems) {
     const key = canonicalizeUrl(item.url) ?? item.url;
     byUrl.set(key, { ...item, url: key });
   }
 
-  for (const r of results) {
-    const canon = canonicalizeUrl(r.url) ?? r.url;
-    const override =
-      (canon && summariesByUrl?.get(canon)) ??
-      (r.url && summariesByUrl?.get(r.url)) ??
-      undefined;
-    const summaryOverride =
-      override !== undefined && override !== null
-        ? override
-        : canon && byUrl.has(canon)
-          ? (byUrl.get(canon)!.summary ?? undefined)
-          : override;
-    const item = await hitToItem(
-      r,
-      now,
-      summaryOverride !== undefined ? summaryOverride : undefined,
-    );
+  // Independent async hitToItem conversions are parallelized via Promise.all;
+  // dedupe/merge then runs sequentially below, so duplicate URLs keep their
+  // first-seen title/highlight/summary-merge behavior in original input order.
+  const converted = await Promise.all(
+    results.map((r) => {
+      const canon = canonicalizeUrl(r.url) ?? r.url;
+      // A real explicit override is only a *present* map entry (canon preferred).
+      // Importantly, a present-but-null value means "no new summary":
+      // hitToItem returns null and the merge preserves the prior summary. No entry
+      // at all means no override: hitToItem falls back to the source summary and a
+      // resulting null still yields the prior summary through the merge below.
+      let summaryOverride: string | null | undefined;
+      if (canon && summariesByUrl?.has(canon)) {
+        summaryOverride = summariesByUrl.get(canon);
+      } else if (r.url && summariesByUrl?.has(r.url)) {
+        summaryOverride = summariesByUrl.get(r.url);
+      }
+      return hitToItem(r, now, summaryOverride);
+    }),
+  );
+  for (const item of converted) {
     if (!item) continue;
     const prev = byUrl.get(item.url);
     if (prev) {
@@ -255,7 +265,14 @@ export async function mergeHitsIntoFeed(
   const items = [...byUrl.values()].sort((a, b) => {
     const da = a.publishedDate ?? a.seenAt;
     const db = b.publishedDate ?? b.seenAt;
-    return db.localeCompare(da);
+    const ta = da ? Date.parse(da) : 0;
+    const tb = db ? Date.parse(db) : 0;
+    if (!Number.isNaN(ta) && !Number.isNaN(tb) && ta !== tb) {
+      return tb - ta;
+    }
+    if (db > da) return 1;
+    if (db < da) return -1;
+    return 0;
   });
 
   const snapshot: FeedSnapshot = {
@@ -272,6 +289,24 @@ export async function mergeHitsIntoFeed(
 
   await writeFeed(env.FEEDS, snapshot);
   return snapshot;
+}
+
+/**
+ * Lock-scoped entrypoint for refresh's read-merge-write.
+ * `mergeHitsIntoFeed` is module-private: it rewrites the feed without its own
+ * concurrency guard and cannot acquire the sync lock itself (no DB/id context).
+ * Callers MUST hold the per-widget sync lock and pass its opaque token as
+ * `lockToken` — refresh obtains it via db.tryAcquireSyncLock. Do not call from
+ * anywhere that lacks lock ownership.
+ */
+export async function mergeHitsIntoFeedLocked(
+  env: { FEEDS: R2Bucket; FEED_CAP: string },
+  widget: WidgetRow,
+  results: SearchHit[],
+  summariesByUrl: Map<string, string | null> | undefined,
+  _lockToken: string,
+): Promise<FeedSnapshot> {
+  return mergeHitsIntoFeed(env, widget, results, summariesByUrl);
 }
 
 export function emptyFeed(widget: WidgetRow): FeedSnapshot {
@@ -315,13 +350,10 @@ export async function purgeFeedCache(
   },
   publicId: string,
 ): Promise<void> {
+  // Origins derive strictly from configured env — no hardcoded domains. The Set
+  // dedupes when FEED_BASE_URL and PUBLIC_BASE_URL share a single origin.
   const origins = new Set<string>();
-  for (const raw of [
-    env.FEED_BASE_URL,
-    env.PUBLIC_BASE_URL,
-    "https://cdn.widget.news",
-    "https://widget.news",
-  ]) {
+  for (const raw of [env.FEED_BASE_URL, env.PUBLIC_BASE_URL]) {
     if (!raw) continue;
     try {
       origins.add(new URL(raw.includes("://") ? raw : `https://${raw}`).origin);

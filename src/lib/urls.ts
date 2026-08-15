@@ -29,16 +29,19 @@ export function isLocalUrl(url: string): boolean {
 }
 
 export function feedUrl(env: Env, publicId: string, req?: Request): string {
-  return `${feedBase(env, req)}/f/${publicId}.json`;
+  return `${feedBase(env, req)}/f/${encodeURIComponent(publicId)}.json`;
 }
 
 /**
- * Dashboard deep link with token once — browser stores it permanently in localStorage.
- * Later visits to /admin auto-login without the query string.
+ * Dashboard deep link carrying the token once via a URL fragment
+ * (…/admin/#token=…), never a query string. The browser stores the key in
+ * localStorage and scrubs the fragment; the fragment is client-only and is NOT
+ * sent to the server in an HTTP request, so the key never appears in server
+ * logs or referrers. Later visits to /admin auto-login without any fragment.
  */
 export function adminUrl(env: Env, _publicId: string, adminToken: string, req?: Request): string {
   const base = publicBase(env, req);
-  return `${base}/admin/?token=${encodeURIComponent(adminToken)}`;
+  return `${base}/admin/#token=${encodeURIComponent(adminToken)}`;
 }
 
 export type EmbedOpts = {
@@ -65,9 +68,9 @@ export function embedSnippet(env: Env, opts: EmbedOpts, req?: Request): string {
   const base = publicBase(env, req);
   const feed = feedBase(env, req);
   const parts = [
-    `data-wn="${opts.publicId}"`,
-    `data-theme="${opts.theme}"`,
-    `data-limit="${opts.widgetLimit}"`,
+    `data-wn="${escapeAttr(opts.publicId)}"`,
+    `data-theme="${escapeAttr(opts.theme)}"`,
+    `data-limit="${escapeAttr(String(opts.widgetLimit))}"`,
   ];
   const title = (opts.title ?? "").trim();
   if (title) {
@@ -80,14 +83,19 @@ export function embedSnippet(env: Env, opts: EmbedOpts, req?: Request): string {
     parts.push(`data-summaries="0"`);
   }
   if (feed !== base) {
-    parts.push(`data-feed-base="${feed}"`);
+    parts.push(`data-feed-base="${escapeAttr(feed)}"`);
   }
   return (
     `<div ${parts.join(" ")}></div>\n` +
-    `<script src="${base}/embed.js" async></script>`
+    `<script src="${escapeAttr(`${base}/embed.js`)}" async></script>`
   );
 }
 
 function escapeAttr(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/'/g, "&#39;");
 }

@@ -1,5 +1,5 @@
 import type { Period, Theme, WidgetRow, WidgetStatus } from "./types.ts";
-import { isLockHeld, LOCK_STALE_MS, SEEN_TOUCH_MS } from "./schedule.ts";
+import { LOCK_STALE_MS, SEEN_TOUCH_MS } from "./schedule.ts";
 
 export async function getWidgetByPublicId(db: D1Database, publicId: string): Promise<WidgetRow | null> {
   return db.prepare("SELECT * FROM widgets WHERE public_id = ?").bind(publicId).first<WidgetRow>();
@@ -66,6 +66,8 @@ export async function insertWidget(
     status: WidgetStatus;
     borderless: number;
     show_summaries: number;
+    /** Create-time presence so grace/inactive clock starts from first use. */
+    last_seen_at?: string | null;
     created_at: string;
     updated_at: string;
   },
@@ -77,7 +79,7 @@ export async function insertWidget(
         query, period, num_results, widget_limit, theme, status,
         borderless, show_summaries,
         last_run_id, last_synced_at, last_seen_at, sync_locked_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?, ?)`,
     )
     .bind(
       row.id,
@@ -92,11 +94,33 @@ export async function insertWidget(
       row.status,
       row.borderless,
       row.show_summaries,
+      row.last_seen_at ?? null,
       row.created_at,
       row.updated_at,
     )
     .run();
 }
+
+/**
+ * Keys updateWidgetRow is allowed to interpolate into SET. Anything else is a
+ * programming error (prevents accidental SQL injection via an unknown key).
+ */
+const UPDATE_WIDGET_ALLOWED = new Set<string>([
+  "name",
+  "query",
+  "period",
+  "num_results",
+  "widget_limit",
+  "theme",
+  "status",
+  "borderless",
+  "show_summaries",
+  "last_run_id",
+  "last_synced_at",
+  "last_seen_at",
+  "sync_locked_at",
+  "updated_at",
+]);
 
 export async function updateWidgetRow(
   db: D1Database,
@@ -121,6 +145,9 @@ export async function updateWidgetRow(
   const sets: string[] = [];
   const values: unknown[] = [];
   for (const [k, v] of Object.entries(fields)) {
+    if (!UPDATE_WIDGET_ALLOWED.has(k)) {
+      throw new Error(`updateWidgetRow: unknown key "${k}"`);
+    }
     if (v === undefined) continue;
     sets.push(`${k} = ?`);
     values.push(v);
@@ -134,30 +161,34 @@ export async function updateWidgetRow(
 }
 
 /**
- * Acquire overlap lock. Returns false if another non-stale lock is held.
+ * Acquire overlap lock. Returns an opaque lock token (the ISO timestamp set in
+ * sync_locked_at) on success, or null if another non-stale lock is held.
+ * The caller must pass the same token to releaseSyncLock so a stale/foreign
+ * holder cannot clear a newer owner's lock.
  * Best-effort under concurrent D1 (not a full serializable lock).
  */
-export async function tryAcquireSyncLock(db: D1Database, id: string): Promise<boolean> {
-  const now = new Date().toISOString();
+export async function tryAcquireSyncLock(db: D1Database, id: string): Promise<string | null> {
+  const token = new Date().toISOString();
   const threshold = new Date(Date.now() - LOCK_STALE_MS).toISOString();
   const res = await db
     .prepare(
-      `UPDATE widgets SET sync_locked_at = ?, updated_at = ?
+      `UPDATE widgets SET sync_locked_at = ?
        WHERE id = ?
          AND (
            sync_locked_at IS NULL
            OR sync_locked_at < ?
          )`,
     )
-    .bind(now, now, id, threshold)
+    .bind(token, id, threshold)
     .run();
-  return (res.meta?.changes ?? 0) > 0;
+  return (res.meta?.changes ?? 0) > 0 ? token : null;
 }
 
-export async function releaseSyncLock(db: D1Database, id: string): Promise<void> {
+/** Clear the overlap lock only when it still holds this exact token. */
+export async function releaseSyncLock(db: D1Database, id: string, token: string): Promise<void> {
   await db
-    .prepare(`UPDATE widgets SET sync_locked_at = NULL WHERE id = ?`)
-    .bind(id)
+    .prepare(`UPDATE widgets SET sync_locked_at = NULL WHERE id = ? AND sync_locked_at = ?`)
+    .bind(id, token)
     .run();
 }
 
@@ -225,7 +256,8 @@ export async function markInactiveWidgets(
        SET status = 'inactive', updated_at = ?
        WHERE status = 'active'
          AND created_at < ?
-         AND (last_seen_at IS NULL OR last_seen_at < ?)`,
+         AND (last_seen_at IS NULL OR last_seen_at < ?)
+         AND sync_locked_at IS NULL`,
     )
     .bind(opts.nowIso, opts.graceBeforeIso, opts.seenBeforeIso)
     .run();

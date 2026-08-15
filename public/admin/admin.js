@@ -11,14 +11,14 @@
   function getStoredToken() {
     return auth() ? auth().getAccessToken() : "";
   }
-  function saveToken(token) {
-    if (auth() && token) auth().setAccessToken(token);
+  function saveToken(token, scope) {
+    if (auth() && token) auth().setAccessToken(token, scope);
   }
   function clearToken() {
     if (auth()) auth().clearAccessToken();
   }
 
-  var APPEARANCE_DEFAULTS = {
+  const APPEARANCE_DEFAULTS = {
     title: "",
     theme: "site",
     widgetLimit: 5,
@@ -26,7 +26,6 @@
     showSummaries: true,
   };
 
-  const params = new URLSearchParams(location.search);
   const loadForm = document.getElementById("load-form");
   const loadCard = document.getElementById("load-card");
   const listCard = document.getElementById("list-card");
@@ -35,7 +34,7 @@
   const loadErr = document.getElementById("load-error");
   const editErr = document.getElementById("edit-error");
   const editOk = document.getElementById("edit-ok");
-  const loadBtn = loadForm.querySelector('button[type="submit"]');
+  const loadBtn = loadForm ? loadForm.querySelector('button[type="submit"]') : null;
   const saveBtn = document.querySelector('#edit-form button[type="submit"]');
   const btnRefresh = document.getElementById("btn-refresh");
   const btnDelete = document.getElementById("btn-delete");
@@ -48,15 +47,14 @@
 
   let state = { publicId: null, token: null, widgets: [], scope: null };
 
-  // Prefill: URL token (deep link) wins once, then permanent localStorage
-  if (params.get("token")) {
-    document.getElementById("token").value = params.get("token");
-  } else if (getStoredToken()) {
+  // Prefill from stored credentials — auth.js already staged any `#token=`
+  // deep link (session scope) and scrubbed it from the URL
+  if (getStoredToken()) {
     document.getElementById("token").value = getStoredToken();
   }
 
   function setNewWidgetLinks() {
-    var href = localeHref("/") + "?new=1";
+    const href = localeHref("/") + "?new=1";
     document.querySelectorAll("#btn-new-widget, #btn-new-widget-manage").forEach(function (a) {
       a.setAttribute("href", href);
       a.removeAttribute("data-lang-path"); // absolute with query
@@ -148,7 +146,7 @@
   }
 
   function setThemeUI(theme) {
-    var val = normalizeTheme(theme);
+    const val = normalizeTheme(theme);
     if (themeInput) themeInput.value = val;
     if (!themeSegment) return;
     themeSegment.querySelectorAll("[data-theme]").forEach(function (b) {
@@ -160,16 +158,45 @@
     return { authorization: "Bearer " + state.token, "content-type": "application/json" };
   }
 
+  // Read an API response exactly once, parsing JSON only for a non-empty body,
+  // so HTML/plain-text edge errors surface as a clear message instead of a
+  // masked JSON parse failure. A successful empty body is a neutral object;
+  // non-OK empty/non-JSON bodies throw a clear status fallback; the thrown
+  // error also carries the HTTP status for auth-rejection detection.
+  async function readApiResponse(res) {
+    const text = await res.text();
+    let data = null;
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = null;
+      }
+    }
+    if (!res.ok) {
+      const err = new Error((data && data.error) || res.statusText || "HTTP " + res.status);
+      err.status = res.status;
+      throw err;
+    }
+    if (!text) return {};
+    if (!data) throw new Error("Unexpected response from server");
+    return data;
+  }
+
   function showOk(msg) {
-    editOk.textContent = msg;
-    editOk.hidden = false;
-    editErr.hidden = true;
+    if (editOk) {
+      editOk.textContent = msg;
+      editOk.hidden = false;
+    }
+    if (editErr) editErr.hidden = true;
   }
 
   function showErr(msg) {
-    editErr.textContent = msg;
-    editErr.hidden = false;
-    editOk.hidden = true;
+    if (editErr) {
+      editErr.textContent = msg;
+      editErr.hidden = false;
+    }
+    if (editOk) editOk.hidden = true;
   }
 
   function ensureEmbed(cb) {
@@ -178,16 +205,53 @@
     s.src = "/embed.js";
     s.onload = cb;
     s.onerror = function () {
+      // A failed embed load must not strand the preview in its loading state.
+      const host = document.getElementById("preview");
+      if (host) host.classList.remove("is-loading");
       showErr(t("sync_embed_fail"));
     };
     document.body.appendChild(s);
+  }
+
+  // Mirror of the backend clampInt: only finite numbers and non-empty finite
+  // numeric strings are accepted; everything else falls back (never coerced,
+  // so blank input preserves the current value instead of sending null/min).
+  function clampInt(value, min, max, fallback) {
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) return fallback;
+      return Math.min(max, Math.max(min, Math.round(value)));
+    }
+    if (typeof value !== "string") return fallback;
+    const trimmed = value.trim();
+    if (!trimmed) return fallback;
+    const n = Number(trimmed);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, Math.round(n)));
+  }
+
+  function currentWidget() {
+    return (
+      state.widgets.find(function (w) {
+        return w.publicId === state.publicId;
+      }) || null
+    );
+  }
+
+  function currentNumResults() {
+    const w = currentWidget();
+    return w ? clampInt(w.numResults, 1, 20, 10) : 10;
+  }
+
+  function currentWidgetLimit() {
+    const w = currentWidget();
+    return w ? clampInt(w.widgetLimit, 1, 50, 5) : 5;
   }
 
   function readAppearanceFromForm() {
     return {
       title: document.getElementById("edit-title").value.trim(),
       theme: normalizeTheme(document.getElementById("edit-theme").value),
-      widgetLimit: parseInt(document.getElementById("edit-limit").value, 10) || 5,
+      widgetLimit: clampInt(document.getElementById("edit-limit").value, 1, 50, currentWidgetLimit()),
       borderless: document.getElementById("edit-borderless").checked,
       showSummaries: document.getElementById("edit-summaries").checked,
     };
@@ -195,6 +259,7 @@
 
   function showPreview(publicId, appearance) {
     const host = document.getElementById("preview");
+    if (!host) return;
     host.classList.add("is-loading");
     host.innerHTML = "";
     const box = document.createElement("div");
@@ -209,7 +274,7 @@
     box.setAttribute("data-no-ping", "1");
     host.appendChild(box);
     ensureEmbed(function () {
-      var api = window.WidgetNews || window.NwNews;
+      const api = window.WidgetNews || window.NwNews;
       if (api) api.mount(box);
       setTimeout(function () {
         host.classList.remove("is-loading");
@@ -232,7 +297,7 @@
   }
 
   ["edit-title", "edit-limit", "edit-borderless", "edit-summaries"].forEach(function (id) {
-    var el = document.getElementById(id);
+    const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener("change", livePreview);
     if (el.tagName === "INPUT" && el.type === "text") {
@@ -263,8 +328,8 @@
   function fill(data) {
     state.publicId = data.publicId;
     document.getElementById("widget-title").textContent = widgetLabel(data);
-    var when = data.lastSyncedAt ? new Date(data.lastSyncedAt).toLocaleString() : "—";
-    var seen = data.lastSeenAt ? new Date(data.lastSeenAt).toLocaleString() : "—";
+    const when = data.lastSyncedAt ? new Date(data.lastSyncedAt).toLocaleString() : "—";
+    const seen = data.lastSeenAt ? new Date(data.lastSeenAt).toLocaleString() : "—";
     document.getElementById("meta-line").textContent = t("admin_meta_line", {
       status: statusLabel(data.status),
       when: when,
@@ -281,11 +346,11 @@
     document.getElementById("edit-summaries").checked =
       data.showSummaries !== false && data.showSummaries !== 0;
     // inactive is system-only — map select to active for editing
-    var st = data.status === "paused" ? "paused" : "active";
+    const st = data.status === "paused" ? "paused" : "active";
     document.getElementById("edit-status").value = st;
     document.getElementById("embed-out").value = data.embed;
     document.getElementById("feed-out").value = data.feedUrl;
-    manage.hidden = false;
+    if (manage) manage.hidden = false;
     if (loadCard) loadCard.hidden = true;
     if (listCard) listCard.hidden = state.widgets.length <= 1;
     if (btnBackList) btnBackList.hidden = state.widgets.length <= 1;
@@ -299,11 +364,12 @@
   }
 
   function renderList(widgets) {
+    if (!widgetList) return;
     widgetList.innerHTML = "";
     widgets.forEach(function (w) {
-      var li = document.createElement("li");
+      const li = document.createElement("li");
       li.className = "widget-list-item";
-      var btn = document.createElement("button");
+      const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "widget-list-btn";
       btn.innerHTML =
@@ -311,12 +377,12 @@
         '<span class="widget-list-meta"></span>' +
         '<span class="status-pill"></span>';
       btn.querySelector(".widget-list-title").textContent = widgetLabel(w);
-      var when = w.lastSyncedAt ? new Date(w.lastSyncedAt).toLocaleDateString() : "—";
+      const when = w.lastSyncedAt ? new Date(w.lastSyncedAt).toLocaleDateString() : "—";
       btn.querySelector(".widget-list-meta").textContent = t("admin_list_meta", {
         when: when,
         period: w.period || "—",
       });
-      var pill = btn.querySelector(".status-pill");
+      const pill = btn.querySelector(".status-pill");
       pill.textContent = statusLabel(w.status);
       pill.className = "status-pill " + statusClass(w.status);
       btn.addEventListener("click", function () {
@@ -329,72 +395,106 @@
   }
 
   async function loadWidgets() {
-    loadErr.hidden = true;
+    if (loadErr) loadErr.hidden = true;
     const token = document.getElementById("token").value.trim();
     if (!token) throw new Error(t("admin_no_widgets"));
     state.token = token;
-    const res = await fetch("/api/widgets?token=" + encodeURIComponent(token));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
+    const res = await fetch("/api/widgets", {
+      headers: { authorization: "Bearer " + token },
+    });
+    const data = await readApiResponse(res);
     const widgets = data.widgets || (data.publicId ? [data] : []);
     if (!widgets.length) throw new Error(t("admin_no_widgets"));
-    // Persist permanently after successful auth
-    saveToken(token);
+    // Only an exact server-confirmed "client" scope is eligible for finite
+    // localStorage persistence; root, missing, or unknown stays session-only
+    // (WN_AUTH purges any persistent key for non-client scopes).
+    if (data.scope === "client") state.scope = "client";
+    else if (data.scope === "root") state.scope = "root";
+    else state.scope = "unknown";
+    saveToken(token, state.scope);
     state.widgets = widgets;
-    state.scope = data.scope || "client";
     if (loadCard) loadCard.hidden = true;
     // Always show list when multiple; single non-root can open editor directly
     if (widgets.length === 1 && state.scope !== "root") {
       if (listCard) listCard.hidden = true;
       fill(widgets[0]);
     } else {
-      manage.hidden = true;
+      if (manage) manage.hidden = true;
       if (listCard) {
         listCard.hidden = false;
         renderList(widgets);
       }
-    }
-    if (location.search) {
-      history.replaceState({}, "", localeHref("/admin"));
     }
   }
 
   function doLogout() {
     clearToken();
     state = { publicId: null, token: null, widgets: [], scope: null };
-    manage.hidden = true;
+    if (manage) manage.hidden = true;
     if (listCard) listCard.hidden = true;
     if (loadCard) loadCard.hidden = false;
-    document.getElementById("token").value = "";
-    loadErr.hidden = true;
+    const tokenInput = document.getElementById("token");
+    if (tokenInput) tokenInput.value = "";
+    if (loadErr) loadErr.hidden = true;
   }
 
-  loadForm.addEventListener("submit", async function (e) {
-    e.preventDefault();
-    await withBusy(loadBtn, t("btn_loading"), async function () {
-      try {
-        await loadWidgets();
-        showOk(t("loaded_ok"));
-      } catch (err) {
-        loadErr.textContent = err.message || String(err);
-        loadErr.hidden = false;
-      }
+  // Single shared in-flight login: calls never run concurrently. A login
+  // requested while one is in flight (e.g. a manual submit during auto-login)
+  // is never discarded — it is queued to run once the current flight settles,
+  // success or failure, under its own busy state so its token is validated.
+  // The handle clears on settle only when nothing newer was queued, so a
+  // submit can retry after any failure.
+  let loginFlight = null;
+  function requestLogin(run) {
+    if (loginFlight) {
+      let queued = loginFlight.catch(function () {}).then(function () {
+        if (loginFlight === queued) loginFlight = null;
+        return requestLogin(run);
+      });
+      loginFlight = queued;
+      return queued;
+    }
+    let tracked = withBusy(loadBtn, t("btn_loading"), run);
+    tracked = tracked.finally(function () {
+      if (loginFlight === tracked) loginFlight = null;
     });
-  });
+    loginFlight = tracked;
+    return tracked;
+  }
 
-  // Auto-login from localStorage or ?token=
-  if (params.get("token") || getStoredToken()) {
-    withBusy(loadBtn, t("btn_loading"), async function () {
+  if (loadForm) {
+    loadForm.addEventListener("submit", function (e) {
+      e.preventDefault();
+      requestLogin(async function () {
+        try {
+          await loadWidgets();
+          showOk(t("loaded_ok"));
+        } catch (err) {
+          if (loadErr) {
+            loadErr.textContent = err.message || String(err);
+            loadErr.hidden = false;
+          }
+        }
+      });
+    });
+  }
+
+  // Auto-login from stored credentials (persistent client key or staged token)
+  if (getStoredToken()) {
+    requestLogin(async function () {
       try {
         await loadWidgets();
       } catch (err) {
-        // Bad stored key — clear so user can re-enter
-        if (getStoredToken() && !params.get("token")) {
+        // Only a server-confirmed auth rejection proves the stored key bad —
+        // transient network/5xx failures keep it for the next visit.
+        if ((err.status === 401 || err.status === 403) && getStoredToken()) {
           clearToken();
           document.getElementById("token").value = "";
         }
-        loadErr.textContent = err.message || String(err);
-        loadErr.hidden = false;
+        if (loadErr) {
+          loadErr.textContent = err.message || String(err);
+          loadErr.hidden = false;
+        }
       }
     });
   }
@@ -404,7 +504,7 @@
 
   if (btnBackList) {
     btnBackList.addEventListener("click", function () {
-      manage.hidden = true;
+      if (manage) manage.hidden = true;
       if (listCard) {
         listCard.hidden = false;
         renderList(state.widgets);
@@ -425,104 +525,117 @@
     });
   }
 
-  document.getElementById("edit-form").addEventListener("submit", async function (e) {
-    e.preventDefault();
-    editErr.hidden = true;
-    editOk.hidden = true;
-    if (!state.publicId || !state.token) {
-      showErr(t("load_first"));
-      return;
-    }
-    await withBusy(saveBtn, t("btn_saving"), async function () {
-      try {
-        const appearance = readAppearanceFromForm();
-        const body = {
-          title: appearance.title,
-          query: document.getElementById("edit-query").value.trim(),
-          period: document.getElementById("edit-period").value,
-          numResults: Number(document.getElementById("edit-num").value),
-          widgetLimit: appearance.widgetLimit,
-          theme: appearance.theme,
-          borderless: appearance.borderless,
-          showSummaries: appearance.showSummaries,
-          status: document.getElementById("edit-status").value,
-        };
-        const res = await fetch("/api/widgets/" + encodeURIComponent(state.publicId), {
-          method: "PATCH",
-          headers: authHeaders(),
-          body: JSON.stringify(body),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || res.statusText);
-        // refresh list cache entry
-        state.widgets = state.widgets.map(function (w) {
-          return w.publicId === data.publicId ? data : w;
-        });
-        fill(data);
-        showOk(t("saved_ok"));
-      } catch (err) {
-        showErr(err.message || String(err));
+  const editForm = document.getElementById("edit-form");
+  if (editForm) {
+    editForm.addEventListener("submit", async function (e) {
+      e.preventDefault();
+      if (editErr) editErr.hidden = true;
+      if (editOk) editOk.hidden = true;
+      if (!state.publicId || !state.token) {
+        showErr(t("load_first"));
+        return;
       }
-    });
-  });
-
-  btnRefresh.addEventListener("click", async function () {
-    if (!state.publicId || !state.token) {
-      showErr(t("load_first"));
-      return;
-    }
-    await withBusy(btnRefresh, t("wait"), async function () {
-      try {
-        const res = await fetch("/api/widgets/" + encodeURIComponent(state.publicId) + "/refresh", {
-          method: "POST",
-          headers: authHeaders(),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || res.statusText);
-        const ok = data.refreshed || data.synced;
-        showOk(
-          ok
-            ? t("refresh_ok_n", { n: data.itemCount || 0 })
-            : t("refresh_fail", { reason: data.reason || "failed" }),
-        );
-        livePreview();
-      } catch (err) {
-        showErr(err.message || String(err));
-      }
-    });
-  });
-
-  btnDelete.addEventListener("click", async function () {
-    if (!state.publicId || !state.token) {
-      showErr(t("load_first"));
-      return;
-    }
-    if (!confirm(t("confirm_delete"))) return;
-    await withBusy(btnDelete, t("btn_deleting"), async function () {
-      try {
-        const res = await fetch("/api/widgets/" + encodeURIComponent(state.publicId), {
-          method: "DELETE",
-          headers: authHeaders(),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || res.statusText);
-        state.widgets = state.widgets.filter(function (w) {
-          return w.publicId !== state.publicId;
-        });
-        state.publicId = null;
-        manage.hidden = true;
-        if (state.widgets.length === 0) {
-          if (listCard) listCard.hidden = true;
-          if (loadCard) loadCard.hidden = false;
-          state.token = null;
-        } else if (listCard) {
-          listCard.hidden = false;
-          renderList(state.widgets);
+      await withBusy(saveBtn, t("btn_saving"), async function () {
+        try {
+          const appearance = readAppearanceFromForm();
+          const body = {
+            title: appearance.title,
+            query: document.getElementById("edit-query").value.trim(),
+            period: document.getElementById("edit-period").value,
+            numResults: clampInt(document.getElementById("edit-num").value, 1, 20, currentNumResults()),
+            widgetLimit: appearance.widgetLimit,
+            theme: appearance.theme,
+            borderless: appearance.borderless,
+            showSummaries: appearance.showSummaries,
+            status: document.getElementById("edit-status").value,
+          };
+          const res = await fetch("/api/widgets/" + encodeURIComponent(state.publicId), {
+            method: "PATCH",
+            headers: authHeaders(),
+            body: JSON.stringify(body),
+          });
+          const data = await readApiResponse(res);
+          // An empty successful body is a neutral {} — keep the loaded widget
+          // and UI state untouched and just report success. Only a response
+          // echoing the loaded publicId is merged into the list cache.
+          if (data && data.publicId && data.publicId === state.publicId) {
+            // refresh list cache entry
+            state.widgets = state.widgets.map(function (w) {
+              return w.publicId === data.publicId ? data : w;
+            });
+            fill(data);
+          }
+          showOk(t("saved_ok"));
+        } catch (err) {
+          showErr(err.message || String(err));
         }
-        alert(t("deleted_ok"));
-      } catch (err) {
-        showErr(err.message || String(err));
-      }
+      });
     });
-  });
+  }
+
+  if (btnRefresh) {
+    btnRefresh.addEventListener("click", async function () {
+      if (!state.publicId || !state.token) {
+        showErr(t("load_first"));
+        return;
+      }
+      await withBusy(btnRefresh, t("wait"), async function () {
+        try {
+          const res = await fetch("/api/widgets/" + encodeURIComponent(state.publicId) + "/refresh", {
+            method: "POST",
+            headers: authHeaders(),
+          });
+          const data = await readApiResponse(res);
+          const ok = data.refreshed || data.synced;
+          showOk(
+            ok
+              ? t("refresh_ok_n", { n: data.itemCount || 0 })
+              : t("refresh_fail", { reason: data.reason || "failed" }),
+          );
+          livePreview();
+        } catch (err) {
+          showErr(err.message || String(err));
+        }
+      });
+    });
+  }
+
+  if (btnDelete) {
+    btnDelete.addEventListener("click", async function () {
+      if (!state.publicId || !state.token) {
+        showErr(t("load_first"));
+        return;
+      }
+      if (!confirm(t("confirm_delete"))) return;
+      await withBusy(btnDelete, t("btn_deleting"), async function () {
+        try {
+          const res = await fetch("/api/widgets/" + encodeURIComponent(state.publicId), {
+            method: "DELETE",
+            headers: authHeaders(),
+          });
+          const data = await readApiResponse(res);
+          state.widgets = state.widgets.filter(function (w) {
+            return w.publicId !== state.publicId;
+          });
+          state.publicId = null;
+          if (manage) manage.hidden = true;
+          if (state.widgets.length === 0) {
+            if (listCard) listCard.hidden = true;
+            if (loadCard) loadCard.hidden = false;
+            clearToken();
+            state.token = null;
+            state.scope = null;
+            const tokenInput = document.getElementById("token");
+            if (tokenInput) tokenInput.value = "";
+          } else if (listCard) {
+            listCard.hidden = false;
+            renderList(state.widgets);
+          }
+          alert(t("deleted_ok"));
+        } catch (err) {
+          showErr(err.message || String(err));
+        }
+      });
+    });
+  }
 })();

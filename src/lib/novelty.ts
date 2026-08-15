@@ -187,10 +187,13 @@ export function filterNovelResults(
       continue;
     }
 
-    kept.push({ ...r, url: canon });
-    seenUrls.add(canon);
-    if (tokens.length) tokenSets.push(tokens);
-    if (limit != null && kept.length >= limit) break;
+    if (limit == null || kept.length < limit) {
+      kept.push({ ...r, url: canon });
+      seenUrls.add(canon);
+      if (tokens.length) tokenSets.push(tokens);
+    } else {
+      dropped++;
+    }
   }
   return { kept, dropped };
 }
