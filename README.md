@@ -10,7 +10,7 @@ Live news widgets for any site. User sets a topic → gets an embed. The **Worke
 
 - **Builder** (`/`) — topic, appearance (title, theme, borderless, summaries), live preview
 - **Dashboard** (`/admin`) — client access key or **root token**; list widgets, edit, pause, refresh, delete
-- **Permanent session** — access key in `localStorage`; return visits open dashboard; **Sign out** clears it
+- **Saved session** — client access key in `localStorage` for 30 days; return visits open dashboard; **Sign out** clears it
 - **New widget under same key** — `/?new=1` or dashboard “+ New widget” (no new token)
 - **Embed** (`/embed.js`) — optional title (header or footer brand), borderless, summaries on/off
 - **Presence + inactive** — beacon → `last_seen_at`; idle widgets stop Exa/AI until traffic returns
@@ -88,10 +88,11 @@ npm run verify
 ## Deploy (production)
 
 ```bash
-# 1) D1 migration (additive columns for 0.6 — ignore “duplicate column” if already applied)
-npm run db:migrate:remote
-# or full schema on empty DB:
+# 1) D1: fresh DB → schema; already-v0.6 DB → do NOT re-run migrate.sql
+#    (ALTERs are one-shot). Repair presence only:
 # npm run db:remote
+# npm run db:migrate:remote
+npm run db:backfill-seen:remote
 
 # 2) Secrets
 npx wrangler secret put EXA_API_KEY

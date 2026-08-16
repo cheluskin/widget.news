@@ -211,7 +211,7 @@ async function handleWidgetsUnsafe(req: Request, env: Env, ctx: ExecutionContext
   }
 
   if (req.method === "PATCH") {
-    return patchWidget(req, env, row);
+    return patchWidget(req, env, ctx, row);
   }
 
   if (req.method === "DELETE") {
@@ -239,22 +239,45 @@ async function listWidgets(req: Request, env: Env): Promise<Response> {
     rows = await db.listWidgetsByTokenHash(env.DB, hash, 50);
   }
 
-  if (!rows.length) {
-    return error(
-      scope === "root" ? "No widgets yet" : "No widgets for this access key",
-      404,
-    );
-  }
-
   return json({
     scope,
     widgets: rows.map((r) => publicResponse(env, r, req)),
   });
 }
 
+const CREATE_RATE_LIMIT = 8;
+const CREATE_RATE_WINDOW_S = 3600;
+
+/** Best-effort per-IP create cap. Fail-open if Cache API is unavailable. */
+async function allowCreate(req: Request): Promise<boolean> {
+  const ip =
+    req.headers.get("cf-connecting-ip") ||
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    "unknown";
+  const key = new Request(`https://widget.news/__rl/create/${encodeURIComponent(ip)}`);
+  try {
+    const cache = caches.default;
+    const hit = await cache.match(key);
+    const n = hit ? Number(await hit.text()) || 0 : 0;
+    if (n >= CREATE_RATE_LIMIT) return false;
+    await cache.put(
+      key,
+      new Response(String(n + 1), {
+        headers: { "cache-control": `max-age=${CREATE_RATE_WINDOW_S}` },
+      }),
+    );
+    return true;
+  } catch {
+    return true;
+  }
+}
+
 async function createWidget(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const key = requireApiKey(env);
   if (key instanceof Response) return key;
+  if (!(await allowCreate(req))) {
+    return error("Too many widgets created from this network. Try again later.", 429);
+  }
 
   let body: CreateWidgetBody;
   try {
@@ -348,7 +371,12 @@ async function createWidget(req: Request, env: Env, ctx: ExecutionContext): Prom
   return json(publicResponse(env, row, req, accessToken), 201);
 }
 
-async function patchWidget(req: Request, env: Env, row: WidgetRow): Promise<Response> {
+async function patchWidget(
+  req: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  row: WidgetRow,
+): Promise<Response> {
   let body: PatchWidgetBody;
   try {
     body = (await req.json()) as PatchWidgetBody;
@@ -368,9 +396,12 @@ async function patchWidget(req: Request, env: Env, row: WidgetRow): Promise<Resp
   if (body.query !== undefined) {
     const q = body.query.trim();
     if (q.length < 3) return error("query must be at least 3 characters");
+    if (q.length > 2000) return error("query too long");
     if (q !== row.query) {
       queryChanged = true;
       dbFields.query = q;
+      // Force the next cron/manual window to treat this as a first fill.
+      dbFields.last_synced_at = null;
     }
   }
   if (body.numResults !== undefined) {
@@ -447,6 +478,7 @@ async function patchWidget(req: Request, env: Env, row: WidgetRow): Promise<Resp
         borderless: row.borderless,
         show_summaries: row.show_summaries,
         last_seen_at: row.last_seen_at,
+        last_synced_at: row.last_synced_at,
         updated_at: row.updated_at,
       });
       return error("Failed to update feed", 502);
@@ -476,6 +508,14 @@ async function patchWidget(req: Request, env: Env, row: WidgetRow): Promise<Resp
     await purgeFeedCache(env, updated.public_id);
   } catch (e) {
     console.error("feed cache purge failed", e);
+  }
+
+  if (queryChanged) {
+    ctx.waitUntil(
+      refreshWidget(env, updated).catch((err) => {
+        console.error("query-change refresh failed", { widgetId: updated.id, error: err });
+      }),
+    );
   }
 
   return json(publicResponse(env, updated, req));
@@ -519,15 +559,10 @@ function clampInt(v: unknown, min: number, max: number, fallback: number): numbe
 
 function searchError(e: unknown, prefix: string): Response {
   if (e instanceof exa.ExaError) {
-    let detail = e.body ?? "";
-    try {
-      const j = JSON.parse(detail) as { message?: string };
-      if (j.message) detail = j.message;
-    } catch {
-      /* keep raw */
-    }
-    return error(`${prefix}: ${detail || e.message}`, e.status >= 400 && e.status < 600 ? e.status : 502);
+    const status = e.status === 429 ? 429 : 502;
+    const detail = status === 429 ? "search rate limited" : "search unavailable";
+    return error(`${prefix}: ${detail}`, status);
   }
-  return error(`${prefix}: ${e instanceof Error ? e.message : String(e)}`, 502);
+  return error(`${prefix}: search unavailable`, 502);
 }
 

@@ -112,8 +112,6 @@ export default {
           service: "widget.news",
           version: VERSION,
           pipeline: "exa-search",
-          hasExaKey: Boolean(env.EXA_API_KEY),
-          hasAi: Boolean(env.AI),
           feedBase: env.FEED_BASE_URL,
           feedMode: "worker-cache-api",
         });
@@ -147,7 +145,7 @@ export default {
       return error("Not found", 404);
     } catch (e) {
       console.error(e);
-      return error(e instanceof Error ? e.message : "Internal error", 500);
+      return error("Internal error", 500);
     }
   },
 

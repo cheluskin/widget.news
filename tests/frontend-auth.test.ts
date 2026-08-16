@@ -103,19 +103,23 @@ describe("app.js Bearer GETs + fragment admin links", () => {
     assert.ok(appJs.includes('authorization: "Bearer " + state.adminToken'), "poll GET missing Bearer");
     assert.ok(appJs.includes('authorization: "Bearer " + tok'), "saved-widget GET missing Bearer");
   });
-  it("localizeAdminUrl: absolute serverUrl wins (query/hash stripped), fragment-only token", () => {
-    assert.match(appJs, /function localizeAdminUrl\(serverUrl, token\) \{[\s\S]*?u\.search = "";[\s\S]*?u\.hash = "";[\s\S]*?location\.origin \+ localeHref\("\/admin"\)[\s\S]*?"#token=" \+ encodeURIComponent\(token\)/);
-    const m = appJs.match(/function localizeAdminUrl\(serverUrl, token\) \{[\s\S]*?\n  \}/);
-    const fn = new Function("location", "localeHref", m![0] + "; return localizeAdminUrl;")(
-      { origin: "https://local.test" }, (p: string) => "/en" + p);
-    assert.equal(fn("https://be.test/admin?token=x#y", "k"), "https://be.test/admin#token=k");
-    assert.equal(fn("https://be.test/a?token=t", ""), "https://be.test/a", "query never re-emitted");
-    assert.equal(fn("javascript:x?token=t", null), "https://local.test/en/admin", "invalid falls back");
-    assert.equal(fn(null, "k"), "https://local.test/en/admin#token=k", "absent falls back");
+  it("localizeAdminUrl is locale-aware and fragment-only", () => {
+    const m = appJs.match(/function localizeAdminUrl\(_serverUrl, token\) \{[\s\S]*?\n  \}/);
+    assert.ok(m, "localizeAdminUrl missing");
+    assert.match(m[0], /localeHref\("\/admin"\)/);
+    assert.match(m[0], /"#token=" \+ encodeURIComponent\(token\)/);
+    assert.ok(!m[0].includes("u.search"), "server path must not win over locale");
+    const fn = new Function("location", "localeHref", m[0] + "; return localizeAdminUrl;")(
+      { origin: "https://local.test" },
+      (p: string) => "/ru" + p,
+    );
+    assert.equal(fn("https://be.test/admin?token=x#y", "k"), "https://local.test/ru/admin#token=k");
+    assert.equal(fn("https://be.test/a?token=t", ""), "https://local.test/ru/admin", "query never re-emitted");
+    assert.equal(fn(null, "k"), "https://local.test/ru/admin#token=k");
   });
   it("restored session links drop publicId/tok and never re-expose the token", () => {
     assert.ok(!/localizeAdminUrl\([^)]*(publicId|,\s*tok\))/.test(appJs), "stale args dropped");
-    assert.ok(appJs.includes("localizeAdminUrl(data.adminUrl, token)"), "serverUrl honored");
+    assert.ok(appJs.includes("localizeAdminUrl(data.adminUrl, token)"), "create-time call still passes serverUrl");
     assert.equal((appJs.match(/localizeAdminUrl\(null, null\)/g) || []).length, 2, "clean restores");
   });
   it("every #open-admin href assignment drops data-lang-path so i18n keeps the fragment", () => {
@@ -149,15 +153,15 @@ describe("admin.js storage-only auth", () => {
   });
 });
 
-describe("admin.js last-widget deletion drops the stored credential", () => {
-  it("empty-widget branch calls clearToken() with state.token = null", () => {
+describe("admin.js last-widget deletion keeps the stored credential", () => {
+  it("empty-widget branch shows the list empty state and does not clearToken", () => {
     const del = adminJs.match(/btnDelete\.addEventListener\("click"[\s\S]*?\n    \}\);/);
     assert.ok(del, "delete handler missing");
-    assert.match(
-      del[0],
-      /if \(state\.widgets\.length === 0\) \{[\s\S]*?clearToken\(\);\s*state\.token = null;/,
-      "last widget deletion must permanently clear the stored token",
-    );
+    const empty = del[0].match(/if \(state\.widgets\.length === 0\) \{[\s\S]*?\n          \}/);
+    assert.ok(empty, "empty-widget branch missing");
+    assert.ok(!empty[0].includes("clearToken("), "last delete must keep the client key");
+    assert.match(empty[0], /renderList\(\[\]\)/);
+    assert.match(empty[0], /listCard\.hidden = false/);
   });
   it("multi-widget branch keeps the shared token", () => {
     const del = adminJs.match(/btnDelete\.addEventListener\("click"[\s\S]*?\n    \}\);/);
@@ -165,6 +169,12 @@ describe("admin.js last-widget deletion drops the stored credential", () => {
     const elseM = del[0].match(/\} else if \(listCard\) \{[\s\S]*?\n          \}/);
     assert.ok(elseM, "multi-widget branch missing");
     assert.ok(!elseM[0].includes("clearToken("), "shared token must survive while widgets remain");
+  });
+  it("empty list from GET /api/widgets is a valid signed-in state", () => {
+    const load = adminJs.match(/async function loadWidgets\(\) \{[\s\S]*?\n  \}/);
+    assert.ok(load, "loadWidgets missing");
+    assert.ok(!load[0].includes('throw new Error(t("admin_no_widgets"))'), "empty list must not fail login");
+    assert.match(load[0], /admin_need_token/);
   });
 });
 
@@ -186,7 +196,20 @@ describe("owned frontend JS is const/let-only", () => {
     assert.ok(!/\bvar\s/.test(authJs), "auth.js still declares var");
     assert.ok(!/\bvar\s/.test(appJs), "app.js still declares var");
     assert.ok(!/\bvar\s/.test(adminJs), "admin.js still declares var");
-    assert.match(appJs, /let url = "";/, "localizeAdminUrl url is the single let (reassigned)");
+  });
+});
+
+describe("builder compose session survives locale switch", () => {
+  it("keeps ?new=1 until create and uses a session compose flag", () => {
+    assert.match(appJs, /COMPOSE_KEY = "wn_compose"/);
+    assert.match(appJs, /function isComposing\(\)/);
+    assert.match(appJs, /if \(forceNew\) setComposing\(true\)/);
+    assert.match(appJs, /storedToken && !isComposing\(\)/);
+    assert.ok(
+      !/if \(forceNew\) \{\s*history\.replaceState/.test(appJs),
+      "must not strip ?new=1 on first paint",
+    );
+    assert.match(appJs, /history\.replaceState\(\{\}, "", localeHref\("\/"\) \+ \(location\.hash \|\| ""\)\)/);
   });
 });
 
@@ -784,6 +807,7 @@ describe("app.js one-time token visibility follows the current submit attempt", 
     const applyWidgetResponse = new Function(
       "state", "getStoredToken", "saveToken", "document", "localizeAdminUrl", "updateTokenBlockUI",
       "signedInBanner", "resultCard", "setFlowStep", "persistState", "setThemeUI", "mountPreview",
+      "localeHref", "location", "history", "forceNew",
       applySrc![0] + "; return applyWidgetResponse;",
     )(
       {
@@ -794,6 +818,7 @@ describe("app.js one-time token visibility follows the current submit attempt", 
       () => "", () => {},
       { getElementById: () => el }, () => "", (reused: boolean) => { shown.push(reused); },
       el, el, () => {}, () => {}, () => {}, () => {},
+      (p: string) => p, { origin: "https://widget.news" }, { replaceState: () => {} }, false,
     );
     applyWidgetResponse(data, { mount: false, existingKey: existingKey });
     return shown;

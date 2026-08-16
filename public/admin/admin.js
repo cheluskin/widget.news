@@ -55,7 +55,7 @@
 
   function setNewWidgetLinks() {
     const href = localeHref("/") + "?new=1";
-    document.querySelectorAll("#btn-new-widget, #btn-new-widget-manage").forEach(function (a) {
+    document.querySelectorAll("#btn-new-widget, #btn-new-widget-manage, #btn-new-widget-empty").forEach(function (a) {
       a.setAttribute("href", href);
       a.removeAttribute("data-lang-path"); // absolute with query
     });
@@ -137,6 +137,7 @@
         return copyText(val);
       });
       if (ok) flashOk(btn, t("btn_copied"));
+      else showErr(t("sync_copy_fail"));
     });
   });
 
@@ -364,6 +365,8 @@
   }
 
   function renderList(widgets) {
+    const emptyEl = document.getElementById("list-empty");
+    if (emptyEl) emptyEl.hidden = widgets.length > 0;
     if (!widgetList) return;
     widgetList.innerHTML = "";
     widgets.forEach(function (w) {
@@ -397,14 +400,13 @@
   async function loadWidgets() {
     if (loadErr) loadErr.hidden = true;
     const token = document.getElementById("token").value.trim();
-    if (!token) throw new Error(t("admin_no_widgets"));
+    if (!token) throw new Error(t("admin_need_token"));
     state.token = token;
     const res = await fetch("/api/widgets", {
       headers: { authorization: "Bearer " + token },
     });
     const data = await readApiResponse(res);
     const widgets = data.widgets || (data.publicId ? [data] : []);
-    if (!widgets.length) throw new Error(t("admin_no_widgets"));
     // Only an exact server-confirmed "client" scope is eligible for finite
     // localStorage persistence; root, missing, or unknown stays session-only
     // (WN_AUTH purges any persistent key for non-client scopes).
@@ -620,13 +622,11 @@
           state.publicId = null;
           if (manage) manage.hidden = true;
           if (state.widgets.length === 0) {
-            if (listCard) listCard.hidden = true;
-            if (loadCard) loadCard.hidden = false;
-            clearToken();
-            state.token = null;
-            state.scope = null;
-            const tokenInput = document.getElementById("token");
-            if (tokenInput) tokenInput.value = "";
+            if (loadCard) loadCard.hidden = true;
+            if (listCard) {
+              listCard.hidden = false;
+              renderList([]);
+            }
           } else if (listCard) {
             listCard.hidden = false;
             renderList(state.widgets);

@@ -9,6 +9,25 @@
     />
     <meta name="theme-color" content="#0B1220" />
     <title>widget.news — News widget for your website</title>
+    <link rel="canonical" href="https://widget.news/" />
+    <link rel="alternate" hreflang="en" href="https://widget.news/" />
+    <link rel="alternate" hreflang="ru" href="https://widget.news/ru/" />
+    <link rel="alternate" hreflang="uk" href="https://widget.news/uk/" />
+    <link rel="alternate" hreflang="x-default" href="https://widget.news/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="widget.news" />
+    <meta property="og:title" content="widget.news — News widget for your website" />
+    <meta
+      property="og:description"
+      content="Add a news widget to your site in minutes. Choose a topic — we keep the feed updated with short summaries."
+    />
+    <meta property="og:url" content="https://widget.news/" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="widget.news — News widget for your website" />
+    <meta
+      name="twitter:description"
+      content="Add a news widget to your site in minutes. Choose a topic — we keep the feed updated with short summaries."
+    />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -60,7 +79,7 @@
         </p>
       </section>
 
-      <ol class="steps" id="flow-steps" aria-label="How it works">
+      <ol class="steps" id="flow-steps" aria-label="How it works" data-i18n-aria="steps_aria">
         <li class="step is-active" data-step="1">
           <span class="step-num">1</span>
           <span class="step-label" data-i18n="step_1">Topic</span>
@@ -91,10 +110,42 @@
           </label>
 
           <div class="example-chips" id="example-chips" role="group" data-i18n-aria="examples_label">
-            <button type="button" class="chip" data-example="electric vehicles EV industry">EV news</button>
-            <button type="button" class="chip" data-example="startup funding venture capital">Startups</button>
-            <button type="button" class="chip" data-example="artificial intelligence AI product launches">AI</button>
-            <button type="button" class="chip" data-example="climate tech renewable energy">Climate tech</button>
+            <button
+              type="button"
+              class="chip"
+              data-i18n="ex_ev"
+              data-i18n-example="ex_ev_q"
+              data-example="electric vehicles EV industry"
+            >
+              EV news
+            </button>
+            <button
+              type="button"
+              class="chip"
+              data-i18n="ex_startups"
+              data-i18n-example="ex_startups_q"
+              data-example="startup funding venture capital"
+            >
+              Startups
+            </button>
+            <button
+              type="button"
+              class="chip"
+              data-i18n="ex_ai"
+              data-i18n-example="ex_ai_q"
+              data-example="artificial intelligence AI product launches"
+            >
+              AI
+            </button>
+            <button
+              type="button"
+              class="chip"
+              data-i18n="ex_climate"
+              data-i18n-example="ex_climate_q"
+              data-example="climate tech renewable energy"
+            >
+              Climate tech
+            </button>
           </div>
 
           <details class="advanced" id="advanced-settings">
@@ -206,7 +257,7 @@
             <div>
               <strong id="token-block-title" data-i18n="label_admin_token">Save your access key</strong>
               <p class="hint tight" id="token-block-hint" data-i18n="token_once">
-                We won’t show it again — open the dashboard and manage all widgets on this key.
+                Saved in this browser for 30 days. You’ll land in the dashboard next time — use Sign out to clear.
               </p>
             </div>
           </div>
@@ -267,6 +318,9 @@
           </div>
         </div>
         <p class="hint flash" id="sync-status-main" hidden></p>
+        <p class="hint tight">
+          <a id="open-demo" href="/demo" data-lang-path="/demo" hidden data-i18n="btn_open_demo">Open full-page demo</a>
+        </p>
       </section>
 
       <footer class="site-footer">

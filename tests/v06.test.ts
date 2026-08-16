@@ -858,7 +858,7 @@ describe("merge & purge contracts", () => {
 describe("markInactiveWidgets skips sync-locked widgets", () => {
   it("filters out rows holding a non-NULL sync lock", () => {
     const src = read("src/lib/db.ts");
-    assert.match(src, /AND sync_locked_at IS NULL/);
+    assert.match(src, /sync_locked_at IS NULL OR sync_locked_at < \?/);
     // Stale-lock recovery stays in refresh acquisition; the unused helper is gone
     assert.doesNotMatch(src, /isLockHeld/);
   });
@@ -871,6 +871,9 @@ describe("worker routing contracts", () => {
     assert.match(src, /seenMatch/);
     assert.match(src, /api\\\/v|api\/v/);
     assert.match(src, /VERSION = "0\.6\.0"/);
+    assert.match(src, /return error\("Internal error", 500\)/);
+    assert.doesNotMatch(src, /e instanceof Error \? e\.message/);
+    assert.doesNotMatch(src, /hasExaKey/);
   });
 
   it("presence handler throttles and reactivates", () => {
@@ -892,6 +895,8 @@ describe("worker routing contracts", () => {
     assert.match(src, /accessToken/);
     assert.match(src, /listWidgetsByTokenHash/);
     assert.match(src, /listAllWidgets/);
+    assert.doesNotMatch(src, /No widgets for this access key/);
+    assert.match(src, /allowCreate/);
     assert.match(src, /function resolveTitle/);
     assert.match(src, /borderless/);
     assert.match(src, /showSummaries|show_summaries/);
@@ -988,6 +993,9 @@ describe("worker routing contracts", () => {
     assert.match(src, /writeFeed\(env\.FEEDS, emptyFeed\(updated\)\)/);
     // Purge runs after any rewrite and when no snapshot exists (cached 404)
     assert.match(src, /await purgeFeedCache\(env, updated\.public_id\)/);
+    assert.match(src, /dbFields\.last_synced_at = null/);
+    assert.match(src, /query too long/);
+    assert.match(src, /query-change refresh failed/);
   });
 
   it("patchWidget guards the row and compensates D1 on feed failure", () => {
@@ -1008,6 +1016,7 @@ describe("worker routing contracts", () => {
       "borderless",
       "show_summaries",
       "last_seen_at",
+      "last_synced_at",
       "updated_at",
     ]) {
       assert.match(src, new RegExp(`${f}: row\\.${f}`));

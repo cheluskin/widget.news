@@ -20,16 +20,31 @@
     if (auth()) auth().clearAccessToken();
   }
 
-  // Logged-in users land in dashboard — stay on builder only with ?new=1
+  // Logged-in users land in dashboard — stay on builder with ?new=1 or a
+  // same-tab compose flag (so language switch / refresh do not dump them
+  // into admin mid-form). ?new=1 stays in the URL until a successful create.
+  const COMPOSE_KEY = "wn_compose";
   const params = new URLSearchParams(location.search);
   const forceNew = params.get("new") === "1" || params.get("new") === "true";
+  function isComposing() {
+    if (forceNew) return true;
+    try {
+      return sessionStorage.getItem(COMPOSE_KEY) === "1";
+    } catch (_) {
+      return false;
+    }
+  }
+  function setComposing(on) {
+    try {
+      if (on) sessionStorage.setItem(COMPOSE_KEY, "1");
+      else sessionStorage.removeItem(COMPOSE_KEY);
+    } catch (_) {}
+  }
+  if (forceNew) setComposing(true);
   const storedToken = getStoredToken();
-  if (storedToken && !forceNew) {
+  if (storedToken && !isComposing()) {
     location.replace(localeHref("/admin"));
     return;
-  }
-  if (forceNew) {
-    history.replaceState({}, "", localeHref("/") + (location.hash || ""));
   }
 
   const form = document.getElementById("create-form");
@@ -75,6 +90,7 @@
     btnLogoutHome.addEventListener("click", function () {
       // Stop both poll handles (hoisted declaration) before dropping the key
       clearPollTimers();
+      setComposing(false);
       clearToken();
       state.adminToken = null;
       state.reusedKey = false;
@@ -205,11 +221,7 @@
         setThemeUI(val);
         state.theme = normalizeTheme(val);
         // Live preview: site inherits this page; light/dark are fixed palettes
-        if (state.publicId) {
-          const app = readAppearance();
-          app.theme = val;
-          mountPreview(state.publicId, app);
-        }
+        if (state.publicId) applyAppearanceLive();
       });
     });
   }
@@ -236,7 +248,7 @@
       state.title = APPEARANCE_DEFAULTS.title;
       state.borderless = APPEARANCE_DEFAULTS.borderless;
       state.showSummaries = APPEARANCE_DEFAULTS.showSummaries;
-      if (state.publicId) mountPreview(state.publicId, APPEARANCE_DEFAULTS);
+      if (state.publicId) applyAppearanceLive();
     });
   }
 
@@ -319,11 +331,57 @@
     document.body.appendChild(s);
   }
 
+  function escapeAttr(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function clientEmbedSnippet(publicId, app) {
+    const parts = [
+      'data-wn="' + escapeAttr(publicId) + '"',
+      'data-theme="' + escapeAttr(normalizeTheme(app.theme)) + '"',
+      'data-limit="' + escapeAttr(String(app.widgetLimit || 5)) + '"',
+    ];
+    if (app.title) parts.push('data-title="' + escapeAttr(app.title) + '"');
+    if (app.borderless) parts.push('data-borderless="1"');
+    if (app.showSummaries === false) parts.push('data-summaries="0"');
+    return (
+      "<div " +
+      parts.join(" ") +
+      "></div>\n" +
+      '<script src="' +
+      escapeAttr(location.origin + "/embed.js") +
+      '" async></script>'
+    );
+  }
+
+  function applyAppearanceLive() {
+    if (!state.publicId) return;
+    const app = readAppearance();
+    state.theme = normalizeTheme(app.theme);
+    state.widgetLimit = app.widgetLimit;
+    state.title = app.title;
+    state.borderless = app.borderless;
+    state.showSummaries = app.showSummaries;
+    const embedCodeEl = document.getElementById("embed-code");
+    if (embedCodeEl) embedCodeEl.value = clientEmbedSnippet(state.publicId, app);
+    mountPreview(state.publicId, app);
+  }
+
+  ["title", "widgetLimit", "borderless", "showSummaries"].forEach(function (id) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("change", applyAppearanceLive);
+  });
+
   function readAppearance() {
     return {
       title: (document.getElementById("title") && document.getElementById("title").value.trim()) || "",
       theme: (document.getElementById("theme") && document.getElementById("theme").value) || "site",
-      widgetLimit: Number((document.getElementById("widgetLimit") || {}).value) || 5,
+      widgetLimit: clampInt((document.getElementById("widgetLimit") || {}).value, 1, 50, 5),
       borderless: !!(document.getElementById("borderless") && document.getElementById("borderless").checked),
       showSummaries: !(
         document.getElementById("showSummaries") && !document.getElementById("showSummaries").checked
@@ -413,23 +471,11 @@
     } catch (_) {}
   }
 
-  // Fragment-only tokens, query strings never emitted: a valid absolute
-  // serverUrl wins (query/hash stripped); else the local locale-aware /admin.
-  function localizeAdminUrl(serverUrl, token) {
-    let url = "";
-    if (serverUrl) {
-      try {
-        const u = new URL(serverUrl);
-        if (u.protocol === "http:" || u.protocol === "https:") {
-          u.search = "";
-          u.hash = "";
-          url = u.toString();
-        }
-      } catch (_) {}
-    }
-    if (!url) url = location.origin + localeHref("/admin");
-    if (token) url += "#token=" + encodeURIComponent(token);
-    return url;
+  // Always locale-aware /admin. Server adminUrl is origin-only (no /ru|/uk);
+  // never emit a query string. Token, if present, stays in the fragment.
+  function localizeAdminUrl(_serverUrl, token) {
+    const url = location.origin + localeHref("/admin");
+    return token ? url + "#token=" + encodeURIComponent(token) : url;
   }
 
   function updateTokenBlockUI(reused) {
@@ -493,6 +539,12 @@
     setFlowStep(3);
     persistState();
     setThemeUI(state.theme);
+    const openDemo = document.getElementById("open-demo");
+    if (openDemo && state.publicId) {
+      openDemo.href = localeHref("/demo") + "?id=" + encodeURIComponent(state.publicId);
+      openDemo.removeAttribute("data-lang-path");
+      openDemo.hidden = false;
+    }
     if (opts.mount !== false) {
       mountPreview(state.publicId, {
         title: state.title,
@@ -501,6 +553,13 @@
         borderless: state.borderless,
         showSummaries: state.showSummaries,
       });
+    }
+    // After a successful create, drop ?new=1 so a language switch restores
+    // this widget instead of a blank form; the compose flag keeps us here.
+    if (forceNew) {
+      try {
+        history.replaceState({}, "", localeHref("/") + (location.hash || ""));
+      } catch (_) {}
     }
   }
 
@@ -555,6 +614,8 @@
       if (n >= maxAttempts) {
         clearPollTimers();
         setSyncStatus(t("sync_timeout"), "err");
+        const more = document.querySelector("#result-card details.result-more");
+        if (more) more.open = true;
       }
     };
 
@@ -733,6 +794,12 @@
             statusLine.className = "ok";
           }
           setThemeUI(state.theme);
+          const openDemoRestore = document.getElementById("open-demo");
+          if (openDemoRestore && state.publicId) {
+            openDemoRestore.href = localeHref("/demo") + "?id=" + encodeURIComponent(state.publicId);
+            openDemoRestore.removeAttribute("data-lang-path");
+            openDemoRestore.hidden = false;
+          }
           mountPreview(state.publicId, {
             title: state.title,
             theme: state.theme,

@@ -39,6 +39,14 @@
       step_2: "Create",
       step_3: "Paste code",
       examples_label: "Example topics",
+      ex_ev: "EV news",
+      ex_startups: "Startups",
+      ex_ai: "AI",
+      ex_climate: "Climate tech",
+      ex_ev_q: "electric vehicles EV industry",
+      ex_startups_q: "startup funding venture capital",
+      ex_ai_q: "artificial intelligence AI product launches",
+      ex_climate_q: "climate tech renewable energy",
       advanced_toggle: "More options",
       advanced_hint: "title, frequency, look",
       embed_hint: "Paste this into your HTML where the news should appear.",
@@ -82,7 +90,7 @@
       status_ready: "News list is ready — copy the code below.",
       label_admin_token: "Save your access key",
       token_once:
-        "Stored in this browser permanently. You’ll land in the dashboard next time — use Sign out to clear.",
+        "Saved in this browser for 30 days. You’ll land in the dashboard next time — use Sign out to clear.",
       label_admin_page: "Admin link",
       label_feed_url: "News feed link",
       label_embed: "Code for your site",
@@ -122,6 +130,12 @@
       admin_list_h2: "Your widgets",
       admin_list_meta: "Updated {when} · every {period}",
       admin_no_widgets: "No widgets for this access key",
+      admin_need_token: "Enter your access key",
+      admin_empty: "No widgets on this key yet.",
+      admin_empty_hint: "Create one — it stays on the same access key.",
+      btn_open_demo: "Open full-page demo",
+      demo_need_id: "Paste a widget ID first",
+      steps_aria: "How it works",
       admin_settings: "Feed settings",
       admin_appearance: "Appearance",
       admin_appearance_hint: "title, look, layout",
@@ -187,6 +201,14 @@
       step_2: "Создать",
       step_3: "Вставить код",
       examples_label: "Примеры тем",
+      ex_ev: "Электромобили",
+      ex_startups: "Стартапы",
+      ex_ai: "ИИ",
+      ex_climate: "Климаттех",
+      ex_ev_q: "электромобили рынок EV",
+      ex_startups_q: "стартапы венчурные инвестиции",
+      ex_ai_q: "искусственный интеллект запуск продуктов",
+      ex_climate_q: "климатические технологии возобновляемая энергия",
       advanced_toggle: "Дополнительно",
       advanced_hint: "заголовок, частота, оформление",
       embed_hint: "Вставьте этот код в HTML туда, где должны быть новости.",
@@ -230,7 +252,7 @@
       status_ready: "Список готов — скопируйте код ниже.",
       label_admin_token: "Сохраните ключ доступа",
       token_once:
-        "Ключ сохранится в браузере бессрочно. В следующий раз вы попадёте сразу в кабинет — «Выйти» сбросит его.",
+        "Ключ сохранится в браузере на 30 дней. В следующий раз вы попадёте сразу в кабинет — «Выйти» сбросит его.",
       label_admin_page: "Ссылка на админку",
       label_feed_url: "Ссылка на ленту",
       label_embed: "Код для сайта",
@@ -269,6 +291,12 @@
       admin_list_h2: "Ваши виджеты",
       admin_list_meta: "Обновлён {when} · каждые {period}",
       admin_no_widgets: "Нет виджетов для этого ключа",
+      admin_need_token: "Введите ключ доступа",
+      admin_empty: "На этом ключе пока нет виджетов.",
+      admin_empty_hint: "Создайте первый — он останется на том же ключе.",
+      btn_open_demo: "Открыть демо на всю страницу",
+      demo_need_id: "Сначала вставьте ID виджета",
+      steps_aria: "Как это работает",
       admin_settings: "Настройки ленты",
       admin_appearance: "Оформление",
       admin_appearance_hint: "заголовок, вид, раскладка",
@@ -333,6 +361,14 @@
       step_2: "Створити",
       step_3: "Вставити код",
       examples_label: "Приклади тем",
+      ex_ev: "Електромобілі",
+      ex_startups: "Стартапи",
+      ex_ai: "ШІ",
+      ex_climate: "Кліматтех",
+      ex_ev_q: "електромобілі ринок EV",
+      ex_startups_q: "стартапи венчурні інвестиції",
+      ex_ai_q: "штучний інтелект запуск продуктів",
+      ex_climate_q: "кліматичні технології відновлювана енергія",
       advanced_toggle: "Додатково",
       advanced_hint: "заголовок, частота, оформлення",
       embed_hint: "Вставте цей код у HTML туди, де мають бути новини.",
@@ -376,7 +412,7 @@
       status_ready: "Список готовий — скопіюйте код нижче.",
       label_admin_token: "Збережіть ключ доступу",
       token_once:
-        "Ключ збережеться в браузері безстроково. Наступного разу ви одразу потрапите в кабінет — «Вийти» скине його.",
+        "Ключ збережеться в браузері на 30 днів. Наступного разу ви одразу потрапите в кабінет — «Вийти» скине його.",
       label_admin_page: "Посилання на адмінку",
       label_feed_url: "Посилання на стрічку",
       label_embed: "Код для сайту",
@@ -415,6 +451,12 @@
       admin_list_h2: "Ваші віджети",
       admin_list_meta: "Оновлено {when} · кожні {period}",
       admin_no_widgets: "Немає віджетів для цього ключа",
+      admin_need_token: "Введіть ключ доступу",
+      admin_empty: "На цьому ключі ще немає віджетів.",
+      admin_empty_hint: "Створіть перший — він залишиться на тому ж ключі.",
+      btn_open_demo: "Відкрити демо на всю сторінку",
+      demo_need_id: "Спочатку вставте ID віджета",
+      steps_aria: "Як це працює",
       admin_settings: "Налаштування стрічки",
       admin_appearance: "Оформлення",
       admin_appearance_hint: "заголовок, вигляд, макет",
@@ -576,6 +618,11 @@
 
     root.querySelectorAll("[data-i18n-title-attr]").forEach(function (el) {
       el.setAttribute("title", t(el.getAttribute("data-i18n-title-attr")));
+    });
+
+    root.querySelectorAll("[data-i18n-example]").forEach(function (el) {
+      var k = el.getAttribute("data-i18n-example");
+      if (k) el.setAttribute("data-example", t(k));
     });
 
     applyLangLinks(root);

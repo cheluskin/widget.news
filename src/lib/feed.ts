@@ -72,19 +72,20 @@ export async function readFeed(bucket: R2Bucket, publicId: string): Promise<Feed
 /**
  * Browser + shared cache policy for feed JSON.
  * - Empty: no shared cache (first fill must show up immediately)
- * - Non-empty: browser 60s, edge 5m, SWR 24h
+ * - Non-empty: browser 60s, edge 5m (no long SWR — colo-local purge cannot
+ *   bust a 24h stale window on other PoPs)
  */
 export function feedCacheControl(itemCount: number): string {
   if (itemCount <= 0) {
     return "public, max-age=0, s-maxage=0, must-revalidate";
   }
-  return "public, max-age=60, s-maxage=300, stale-while-revalidate=86400";
+  return "public, max-age=60, s-maxage=300, must-revalidate";
 }
 
 /** Edge TTL string for CDN-Cache-Control (Cloudflare honors this over Cache-Control for edge). */
 export function feedCdnCacheControl(itemCount: number): string {
   if (itemCount <= 0) return "max-age=0, must-revalidate";
-  return "public, max-age=300, stale-while-revalidate=86400";
+  return "public, max-age=300, must-revalidate";
 }
 
 /**

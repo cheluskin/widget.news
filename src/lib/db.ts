@@ -250,6 +250,7 @@ export async function markInactiveWidgets(
   db: D1Database,
   opts: { graceBeforeIso: string; seenBeforeIso: string; nowIso: string },
 ): Promise<number> {
+  const staleBeforeIso = new Date(Date.parse(opts.nowIso) - LOCK_STALE_MS).toISOString();
   const res = await db
     .prepare(
       `UPDATE widgets
@@ -257,9 +258,9 @@ export async function markInactiveWidgets(
        WHERE status = 'active'
          AND created_at < ?
          AND (last_seen_at IS NULL OR last_seen_at < ?)
-         AND sync_locked_at IS NULL`,
+         AND (sync_locked_at IS NULL OR sync_locked_at < ?)`,
     )
-    .bind(opts.nowIso, opts.graceBeforeIso, opts.seenBeforeIso)
+    .bind(opts.nowIso, opts.graceBeforeIso, opts.seenBeforeIso, staleBeforeIso)
     .run();
   return res.meta?.changes ?? 0;
 }

@@ -73,6 +73,13 @@
             <button type="button" id="btn-logout" class="ghost small" data-i18n="btn_logout">Sign out</button>
           </div>
         </div>
+        <p class="hint list-empty" id="list-empty" hidden>
+          <span data-i18n="admin_empty">No widgets on this key yet.</span>
+          <span data-i18n="admin_empty_hint">Create one — it stays on the same access key.</span>
+          <a id="btn-new-widget-empty" class="btn-link" href="/?new=1" data-lang-path="/" data-i18n="btn_new_widget"
+            >+ New widget</a
+          >
+        </p>
         <ul id="widget-list" class="widget-list"></ul>
       </section>
 
@@ -225,7 +232,7 @@
 
       <footer class="site-footer">
         <span class="brand-mini">widget<span class="dot">.</span>news</span>
-        <span data-i18n="footer_admin">Admin · keep your password secret</span>
+        <span data-i18n="footer_admin">Dashboard · keep your access key secret</span>
       </footer>
     </main>
     <script src="/auth.js"></script>

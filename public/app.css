@@ -1113,6 +1113,14 @@ button.linkish {
 }
 
 /* —— Admin widget list —— */
+.list-empty {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+.list-empty[hidden] {
+  display: none;
+}
 .widget-list {
   list-style: none;
   margin: 0;

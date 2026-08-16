@@ -57,6 +57,7 @@
           <input id="pid" data-i18n-placeholder="ph_public_id" placeholder="from create or admin link" />
         </label>
         <button type="button" id="go" class="btn-primary" data-i18n="btn_show">Show widget</button>
+        <p class="err" id="demo-error" hidden></p>
         <div class="preview-frame" style="margin-top: 16px">
           <div class="preview-chrome" aria-hidden="true">
             <span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span>
@@ -74,23 +75,51 @@
     <script src="/i18n.js"></script>
     <script src="/embed.js"></script>
     <script>
-      document.getElementById("go").onclick = function () {
-        var id = document.getElementById("pid").value.trim();
-        var host = document.getElementById("host");
-        host.innerHTML = "";
-        if (!id) return;
-        var d = document.createElement("div");
-        d.setAttribute("data-wn", id);
-        d.setAttribute("data-theme", "site");
-        d.setAttribute("data-limit", "5");
-        host.appendChild(d);
-        if (window.WidgetNews) window.WidgetNews.mount(d);
-      };
-      var q = new URLSearchParams(location.search).get("id");
-      if (q) {
-        document.getElementById("pid").value = q;
-        document.getElementById("go").click();
-      }
+      (function () {
+        const go = document.getElementById("go");
+        const pid = document.getElementById("pid");
+        const host = document.getElementById("host");
+        const errEl = document.getElementById("demo-error");
+        function t(key) {
+          return window.WN_I18N ? window.WN_I18N.t(key) : key;
+        }
+        function show(id) {
+          if (errEl) errEl.hidden = true;
+          host.innerHTML = "";
+          if (!id) {
+            if (errEl) {
+              errEl.textContent = t("demo_need_id");
+              errEl.hidden = false;
+            }
+            return;
+          }
+          const d = document.createElement("div");
+          d.setAttribute("data-wn", id);
+          d.setAttribute("data-theme", "site");
+          d.setAttribute("data-limit", "5");
+          host.appendChild(d);
+          if (window.WidgetNews) window.WidgetNews.mount(d);
+        }
+        if (go) {
+          go.addEventListener("click", function () {
+            show((pid && pid.value.trim()) || "");
+          });
+        }
+        let initial = new URLSearchParams(location.search).get("id") || "";
+        if (!initial) {
+          try {
+            const raw = sessionStorage.getItem("wn_last_widget");
+            if (raw) {
+              const saved = JSON.parse(raw);
+              if (saved && saved.publicId) initial = String(saved.publicId);
+            }
+          } catch (_) {}
+        }
+        if (initial && pid) {
+          pid.value = initial;
+          show(initial);
+        }
+      })();
     </script>
   </body>
 </html>
